@@ -10,16 +10,18 @@ import {
   Download,
   Terminal,
   Brain,
+  GitBranch,
 } from 'lucide-react';
 import { PersistentSessionMemory } from '../types';
 
 interface HeaderProps {
-  activeTab: 'pipeline' | 'knowledge' | 'innershell' | 'crypto' | 'guard' | 'memory';
-  setActiveTab: (tab: 'pipeline' | 'knowledge' | 'innershell' | 'crypto' | 'guard' | 'memory') => void;
+  activeTab: 'pipeline' | 'knowledge' | 'innershell' | 'crypto' | 'guard' | 'twin' | 'memory';
+  setActiveTab: (tab: 'pipeline' | 'knowledge' | 'innershell' | 'crypto' | 'guard' | 'twin' | 'memory') => void;
   sessionMemory: PersistentSessionMemory;
   boundaryStatus: 'LOCKED' | 'AUDITING' | 'PASSED' | 'FEEDBACK_LOOP';
   onResetSession: () => void;
   onOpenMemoryModal: () => void;
+  onOpenOutputHub: () => void;
   hasWatermarkAndLogic: boolean;
 }
 
@@ -30,6 +32,7 @@ export const Header: React.FC<HeaderProps> = ({
   boundaryStatus,
   onResetSession,
   onOpenMemoryModal,
+  onOpenOutputHub,
   hasWatermarkAndLogic,
 }) => {
   const memoryKeyCount = Object.keys(sessionMemory.memoryLattice || {}).length;
@@ -161,10 +164,36 @@ export const Header: React.FC<HeaderProps> = ({
             <ShieldCheck className="w-3.5 h-3.5" />
             <span>5. Phase Guard</span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('twin')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+              activeTab === 'twin'
+                ? 'bg-gradient-to-r from-cyan-400 to-indigo-500 text-slate-950 font-bold shadow-sm shadow-cyan-500/30'
+                : 'text-indigo-400 hover:text-indigo-200 hover:bg-indigo-950/40'
+            }`}
+          >
+            <GitBranch className="w-3.5 h-3.5" />
+            <span>6. AetherTwin (Parallel)</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+          </button>
         </nav>
 
         {/* Quick Actions */}
         <div className="flex items-center gap-2">
+          {/* AetherShell Output Tool Button with Icon */}
+          <button
+            onClick={onOpenOutputHub}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-cyan-500/20 via-indigo-500/20 to-purple-500/20 hover:from-cyan-500/30 hover:to-indigo-500/30 border border-cyan-500/40 text-cyan-300 font-mono text-xs font-semibold shadow-sm shadow-cyan-500/10 transition-all hover:scale-[1.02] active:scale-[0.98]"
+            title="AetherShell Output Tool: Copy, Paste, or Download Output"
+          >
+            <Download className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden sm:inline">Output Tool</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 border border-cyan-700/60 uppercase">
+              Export / Import
+            </span>
+          </button>
+
           <button
             onClick={onResetSession}
             className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"

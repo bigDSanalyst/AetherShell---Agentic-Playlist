@@ -7,6 +7,8 @@ import { PhaseBoundary } from './components/PhaseBoundary';
 import { GuardShell } from './components/GuardShell';
 import { SessionMemoryModal } from './components/SessionMemoryModal';
 import { EpistemicKnowledgeEngine } from './components/EpistemicKnowledgeEngine';
+import { AetherTwinParallel } from './components/AetherTwinParallel';
+import { AetherOutputHubModal } from './components/AetherOutputHubModal';
 import {
   PlaylistData,
   VideoNode,
@@ -19,6 +21,7 @@ import {
   SynthesizedKnowledge,
   CustomGitHubGuard,
   GitHubGuardAuditResult,
+  DualGuardComparisonReport,
 } from './types';
 import {
   fetchCuratedPlaylists,
@@ -27,6 +30,9 @@ import {
   watermarkAndBindCrypto,
   runRclSsiCycle,
   validateWithGuardShell,
+  validateWithGuardShellBeta,
+  validateWithDualGuardShells,
+  absorbRunIntoTwin,
 } from './services/api';
 import {
   AlertCircle,
@@ -42,8 +48,9 @@ const SESSION_STORAGE_KEY = 'AETHERSHELL_SESSION_PERSISTENT_MEMORY_V2';
 
 export default function App() {
   // Navigation
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'knowledge' | 'innershell' | 'crypto' | 'guard' | 'memory'>('pipeline');
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'knowledge' | 'innershell' | 'crypto' | 'guard' | 'twin' | 'memory'>('pipeline');
   const [isMemoryModalOpen, setIsMemoryModalOpen] = useState(false);
+  const [isOutputHubOpen, setIsOutputHubOpen] = useState(false);
 
   // Data State
   const [curatedPlaylists, setCuratedPlaylists] = useState<CuratedPlaylistSummary[]>([]);
@@ -57,6 +64,8 @@ export default function App() {
 
   // Guard Shell & Phase Boundary State
   const [guardReport, setGuardReport] = useState<GuardAuditReport | null>(null);
+  const [guardReportBeta, setGuardReportBeta] = useState<GuardAuditReport | null>(null);
+  const [dualComparisonReport, setDualComparisonReport] = useState<DualGuardComparisonReport | null>(null);
   const [boundaryStatus, setBoundaryStatus] = useState<'LOCKED' | 'AUDITING' | 'PASSED' | 'FEEDBACK_LOOP'>('LOCKED');
   const [customGitHubGuard, setCustomGitHubGuard] = useState<CustomGitHubGuard | null>(null);
   const [customGuardAuditResult, setCustomGuardAuditResult] = useState<GitHubGuardAuditResult | null>(null);
@@ -328,9 +337,92 @@ export default function App() {
           ...prev.historyRuns.slice(0, 19),
         ],
       }));
+
+      // Concurrently feed execution event to Parallel Shadow System
+      absorbRunIntoTwin({
+        runId: `RUN-${Date.now().toString(36)}`,
+        innershellLogic,
+        guardReport: res.guardReport,
+      }).catch((e) => console.warn('Shadow twin absorption failed silently:', e));
     } catch (err: any) {
       setBoundaryStatus('LOCKED');
       showToast(err.message || 'Guard Shell validation failed', 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Run Guard Shell Beta Independent Adversarial Audit
+  const handleRunBetaGuardAudit = async (adversarialStrictness: 'HIGH' | 'MAXIMUM' | 'STANDARD' = 'HIGH') => {
+    if (!activeVideo?.rawTranscript || !innershellLogic) {
+      showToast('Ground truth transcript and innershell logic are required', 'error');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const res = await validateWithGuardShellBeta({
+        directTranscript: activeVideo.rawTranscript,
+        watermark: activeVideo.watermark,
+        compressedRecord: activeVideo.compressedTranscript,
+        innershellLogic,
+        executedOutput: lastExecutionResult?.output,
+        adversarialStrictness,
+      });
+
+      setGuardReportBeta(res.guardReport);
+      showToast('Guard Shell Beta: Independent adversarial audit complete!', 'info');
+    } catch (err: any) {
+      showToast(err.message || 'Guard Shell Beta audit failed', 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Run Concurrent Dual Guard Verification (Alpha + Beta)
+  const handleRunDualGuardAudit = async (adversarialStrictness: 'HIGH' | 'MAXIMUM' | 'STANDARD' = 'HIGH') => {
+    if (!activeVideo?.rawTranscript || !innershellLogic) {
+      showToast('Ground truth transcript and innershell logic are required', 'error');
+      return;
+    }
+
+    setIsLoading(true);
+    setBoundaryStatus('AUDITING');
+
+    try {
+      const comparison = await validateWithDualGuardShells({
+        directTranscript: activeVideo.rawTranscript,
+        watermark: activeVideo.watermark,
+        compressedRecord: activeVideo.compressedTranscript,
+        innershellLogic,
+        executedOutput: lastExecutionResult?.output,
+        adversarialStrictness,
+      });
+
+      setDualComparisonReport(comparison);
+      setGuardReport(comparison.guardReportAlpha);
+      setGuardReportBeta(comparison.guardReportBeta);
+
+      if (comparison.passedConcurrentValidation) {
+        setBoundaryStatus('PASSED');
+        showToast(`Dual Guard Quorum Approved: δ_α=${comparison.deltaAlpha}, δ_β=${comparison.deltaBeta}`, 'success');
+      } else if (comparison.consensusStatus === 'DIVERGENCE_DISAGREEMENT') {
+        setBoundaryStatus('FEEDBACK_LOOP');
+        showToast(`Dual Guard Divergence Gap Detected (|δ_α - δ_β| = ${comparison.divergenceDiscrepancy})! Quarantined.`, 'error');
+      } else {
+        setBoundaryStatus('LOCKED');
+        showToast('Dual Guard Shells: Quarantined at phase boundary.', 'info');
+      }
+
+      // Record in session memory
+      absorbRunIntoTwin({
+        runId: `DUAL-RUN-${Date.now().toString(36)}`,
+        innershellLogic,
+        guardReport: comparison.guardReportAlpha,
+      }).catch(() => {});
+    } catch (err: any) {
+      setBoundaryStatus('LOCKED');
+      showToast(err.message || 'Dual Guard verification failed', 'error');
     } finally {
       setIsLoading(false);
     }
@@ -424,6 +516,7 @@ export default function App() {
         boundaryStatus={boundaryStatus}
         onResetSession={handleResetSession}
         onOpenMemoryModal={() => setIsMemoryModalOpen(true)}
+        onOpenOutputHub={() => setIsOutputHubOpen(true)}
         hasWatermarkAndLogic={hasWatermarkAndLogic}
       />
 
@@ -508,16 +601,49 @@ export default function App() {
         {activeTab === 'guard' && (
           <GuardShell
             guardReport={guardReport}
+            guardReportBeta={guardReportBeta}
+            dualComparisonReport={dualComparisonReport}
             activeVideo={activeVideo}
             innershellLogic={innershellLogic}
             lastExecutionResult={lastExecutionResult}
             onTriggerFeedbackLoop={handleTriggerFeedbackLoop}
             onRunAudit={handleRunGuardAudit}
+            onRunBetaAudit={handleRunBetaGuardAudit}
+            onRunDualAudit={handleRunDualGuardAudit}
             isLoading={isLoading}
             customGitHubGuard={customGitHubGuard}
             setCustomGitHubGuard={setCustomGitHubGuard}
             customGuardAuditResult={customGuardAuditResult}
             setCustomGuardAuditResult={setCustomGuardAuditResult}
+          />
+        )}
+
+        {/* Tab 6: Replicated Parallel Shadow System (AetherTwin) */}
+        {activeTab === 'twin' && (
+          <AetherTwinParallel
+            innershellLogic={innershellLogic}
+            guardReport={guardReport}
+            sessionMemory={sessionMemory}
+            activeRclIterations={sessionMemory.memoryLattice.optimalRclIterations || 3}
+            onApplyOptimalRclIterations={(count) => {
+              setSessionMemory((prev) => ({
+                ...prev,
+                lastActive: Date.now(),
+                memoryLattice: {
+                  ...prev.memoryLattice,
+                  optimalRclIterations: count,
+                },
+              }));
+              showToast(`Applied optimal ${count} RCL iterations to Innershell Engine!`, 'success');
+            }}
+            onUpdateSessionMemory={(newMem) =>
+              setSessionMemory((prev) => ({
+                ...prev,
+                lastActive: Date.now(),
+                memoryLattice: newMem,
+              }))
+            }
+            showToast={showToast}
           />
         )}
       </main>
@@ -535,6 +661,34 @@ export default function App() {
           }))
         }
         onResetSession={handleResetSession}
+      />
+
+      {/* AetherShell Output Tool: Copy / Paste / Download Modal */}
+      <AetherOutputHubModal
+        isOpen={isOutputHubOpen}
+        onClose={() => setIsOutputHubOpen(false)}
+        activeVideo={activeVideo}
+        innershellLogic={innershellLogic}
+        rclAnalysis={rclAnalysis}
+        lastExecutionResult={lastExecutionResult}
+        guardReport={guardReport}
+        sessionMemory={sessionMemory}
+        onRestoreState={({ innershellLogic: l, guardReport: g, rclAnalysis: r, memoryLattice: m }) => {
+          if (l) setInnershellLogic(l);
+          if (g) setGuardReport(g);
+          if (r) setRclAnalysis(r);
+          if (m) {
+            setSessionMemory((prev) => ({
+              ...prev,
+              lastActive: Date.now(),
+              memoryLattice: { ...prev.memoryLattice, ...m },
+            }));
+          }
+          if (g?.semanticAudit?.boundaryDecision === 'APPROVED') {
+            setBoundaryStatus('PASSED');
+          }
+        }}
+        showToast={showToast}
       />
 
       {/* Footer */}

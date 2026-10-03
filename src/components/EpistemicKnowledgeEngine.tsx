@@ -56,6 +56,7 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
   const [focusQuery, setFocusQuery] = useState('');
   const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [knowledge, setKnowledge] = useState<SynthesizedKnowledge | null>(null);
+  const [selectedModel, setSelectedModel] = useState<string>('gemini-flash-latest');
 
   // Subjugated Chat State
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -101,6 +102,7 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
         videos: playlist.videos,
         mode: synthesisMode,
         focusQuery,
+        preferredModel: selectedModel,
       });
 
       setKnowledge(res.knowledge);
@@ -142,6 +144,7 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
         playlistTitle: playlist.title,
         videos: playlist.videos,
         subjugationStrictness: 0.95,
+        preferredModel: selectedModel,
       });
 
       const modelMsg: ChatMessage = {
@@ -249,21 +252,45 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
           </div>
 
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 font-mono text-xs">
+            {/* Model Selector with Modern Gemini Models */}
+            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-indigo-700/60 text-xs font-mono">
+              <Sparkles className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+              <span className="text-slate-400 hidden xl:inline">Engine:</span>
+              <select
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className="bg-transparent text-cyan-300 font-bold focus:outline-none cursor-pointer pr-1"
+              >
+                <option value="gemini-flash-latest" className="bg-slate-900 text-cyan-300">
+                  Gemini Flash Latest (1M Context • Primary) ⚡
+                </option>
+                <option value="gemini-3.1-pro-preview" className="bg-slate-900 text-slate-200">
+                  Gemini 3.1 Pro (2M Token Pool • Deep Reasoning) 👑
+                </option>
+                <option value="gemini-3.1-flash-lite" className="bg-slate-900 text-slate-200">
+                  Gemini 3.1 Flash Lite (High Throughput)
+                </option>
+                <option value="gemini-3.8-flash" className="bg-slate-900 text-slate-200">
+                  Gemini 3.8 Flash
+                </option>
+              </select>
+            </div>
+
             <div className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700/80 text-slate-300">
               <span>Subjugated Corpus: </span>
               <strong className="text-cyan-400">{playlist?.videos?.length || 0} Videos</strong>
               <span className="text-slate-500"> ({totalWords.toLocaleString()} words)</span>
             </div>
 
-            {/* Token Pool Headroom Gauge */}
+            {/* Token Pool Headroom Gauge with 2M support */}
             <div className="px-3 py-1.5 rounded-lg bg-indigo-950/80 border border-indigo-700/60 text-indigo-300 flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
               <span>Token Pool: </span>
               <strong className="text-emerald-400">
-                {Math.round(totalWords * 1.35).toLocaleString()} / 1,048,576
+                {Math.round(totalWords * 1.35).toLocaleString()} / {selectedModel === 'gemini-3.1-pro-preview' ? '2,097,152' : '1,048,576'}
               </strong>
-              <span className="text-[10px] text-indigo-400 bg-indigo-900/60 px-1.5 py-0.5 rounded">
-                {((Math.round(totalWords * 1.35) / 1048576) * 100).toFixed(2)}% Used
+              <span className="text-[10px] text-indigo-300 bg-indigo-900/60 px-1.5 py-0.5 rounded font-bold">
+                {((Math.round(totalWords * 1.35) / (selectedModel === 'gemini-3.1-pro-preview' ? 2097152 : 1048576)) * 100).toFixed(2)}% Used
               </span>
             </div>
           </div>

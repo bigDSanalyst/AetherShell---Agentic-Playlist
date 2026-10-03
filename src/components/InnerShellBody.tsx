@@ -18,6 +18,8 @@ import {
   Zap,
   Activity,
   Award,
+  Copy,
+  Download,
 } from 'lucide-react';
 import {
   InnershellLogic,
@@ -59,6 +61,13 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
   const [isExecutingScript, setIsExecutingScript] = useState(false);
   const [customScriptCode, setCustomScriptCode] = useState<string>('');
   const [testedInvariants, setTestedInvariants] = useState<Record<string, boolean>>({});
+
+  // Sync rclIterations if optimal count applied from AetherTwin
+  React.useEffect(() => {
+    if (sessionMemory.memoryLattice?.optimalRclIterations) {
+      setRclIterations(sessionMemory.memoryLattice.optimalRclIterations);
+    }
+  }, [sessionMemory.memoryLattice?.optimalRclIterations]);
 
   const handleTestInvariant = (inv: SotaReflexiveInvariant) => {
     try {
@@ -144,12 +153,19 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
                 <Sliders className="w-3.5 h-3.5 text-cyan-400" />
                 RCL Iteration Loops:
               </span>
-              <span className="text-cyan-400 font-bold">{rclIterations}x</span>
+              <span className="flex items-center gap-1.5">
+                {sessionMemory.memoryLattice?.optimalRclIterations === rclIterations && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/60 font-bold uppercase animate-pulse">
+                    Twin Optimal N*
+                  </span>
+                )}
+                <span className="text-cyan-400 font-bold">{rclIterations}x</span>
+              </span>
             </label>
             <input
               type="range"
               min={1}
-              max={5}
+              max={6}
               value={rclIterations}
               onChange={(e) => setRclIterations(Number(e.target.value))}
               className="w-full accent-cyan-400 cursor-pointer"
@@ -395,6 +411,36 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
                 </h3>
               </div>
               <div className="flex items-center gap-2">
+                {customScriptCode && (
+                  <>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(customScriptCode);
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-xs flex items-center gap-1 transition-colors"
+                      title="Copy synthesized script to clipboard"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Copy</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        const blob = new Blob([customScriptCode], { type: 'text/javascript' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `innershell-script-${Date.now().toString(36)}.js`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-xs flex items-center gap-1 transition-colors"
+                      title="Download script as .js file"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Download</span>
+                    </button>
+                  </>
+                )}
                 <button
                   onClick={handleRunScript}
                   disabled={isExecutingScript || !customScriptCode}

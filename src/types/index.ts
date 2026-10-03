@@ -161,6 +161,153 @@ export interface GuardAuditReport {
     correctiveRclGuidance: string;
   };
   passedPhaseBoundary: boolean;
+  // Multi-Guard Shell Defense Array Telemetry
+  multiGuardTelemetry?: {
+    guard1ChannelSentinel: {
+      name: string;
+      status: 'PASS' | 'WARN' | 'FAIL';
+      compressionIntegrityLemmaVerified: boolean;
+      channelDriftDetected: boolean;
+      preCompressionHashMatch: boolean;
+      evidence: string;
+    };
+    guard2SemanticAuditor: {
+      name: string;
+      status: 'PASS' | 'WARN' | 'FAIL';
+      semanticDistanceDelta: number; // δ(Ls, T)
+      epsilonThreshold: number; // ε tolerance (e.g. 0.05)
+      synthesisDriftDetected: boolean;
+      citationCoveragePercent: number;
+      evidence: string;
+    };
+    guard3FormalOracle: {
+      name: string;
+      status: 'PASS' | 'WARN' | 'FAIL';
+      hoareTriplesVerifiedCount: number;
+      lyapunovResidual: number;
+      stateContinuityEnforced: boolean;
+      evidence: string;
+    };
+    guard4CustomGitHub?: {
+      name: string;
+      status: 'PASS' | 'WARN' | 'FAIL';
+      customRulesEvaluated: number;
+      evidence: string;
+    };
+    triiVerificationCondition: {
+      cryptographicParityMet: boolean; // H(A) = H(Ls)
+      semanticDistanceMet: boolean; // δ(A, T) <= ε
+      isAlignmentValid: boolean; // Both must hold
+      failureModeClassification: 'NONE' | 'CHANNEL_DRIFT' | 'SYNTHESIS_DRIFT' | 'FORMAL_INVARIANT_VIOLATION';
+    };
+    consensusSummary: {
+      unanimousVote: boolean;
+      passCount: number;
+      totalActiveGuards: number;
+      quarantineTriggeredBy: string[];
+    };
+  };
+}
+
+export interface DualGuardComparisonReport {
+  timestamp: number;
+  guardReportAlpha: GuardAuditReport;
+  guardReportBeta: GuardAuditReport;
+  deltaAlpha: number; // δ_alpha
+  deltaBeta: number; // δ_beta
+  divergenceDiscrepancy: number; // |δ_alpha - δ_beta|
+  epsilonThreshold: number; // ε
+  consensusStatus: 'UNANIMOUS_APPROVED' | 'DIVERGENCE_DISAGREEMENT' | 'UNANIMOUS_QUARANTINED';
+  arbitrationVerdict: 'APPROVED' | 'QUARANTINED' | 'REVISE_VIA_FEEDBACK_LOOP';
+  meanAlignmentScore: number;
+  passedConcurrentValidation: boolean;
+  comparativeObservations: string[];
+}
+
+export interface LearnedMetaTheorem {
+  id: string;
+  name: string;
+  formalStatement: string;
+  derivedFromRunId: string;
+  discoveredAt: number;
+  confidenceScore: number;
+  category: 'INVARIANT_HEURISTIC' | 'DRIFT_PREVENTION' | 'CHANNEL_INTEGRITY' | 'SPEAKER_TOPOLOGY';
+  status: 'ACTIVE_SHADOW' | 'APPLIED_TO_PRIMARY' | 'CANDIDATE';
+  description: string;
+}
+
+export interface CounterfactualExperiment {
+  id: string;
+  hypothesis: string;
+  parameterChanged: string;
+  baselineValue: string;
+  counterfactualValue: string;
+  baselineScore: number;
+  simulatedScore: number;
+  deltaImprovement: number;
+  status: 'COMPLETED' | 'SIMULATING';
+  ranAt: number;
+  verdict: 'SUPERIOR' | 'INFERIOR' | 'EQUIVALENT';
+}
+
+export interface TwinLogicStateRecord {
+  id: string;
+  timestamp: number;
+  videoTitle: string;
+  logicId: string;
+  summary: string;
+  classification: 'SUCCESSFUL' | 'DRIFTED_SYNTHESIS' | 'DRIFTED_CHANNEL' | 'DRIFTED_HOARE';
+  rclIterationCount: number;
+  semanticDistanceDelta: number; // δ(Ls, T)
+  epsilonThreshold: number; // ε tolerance
+  alignmentScore: number;
+  lyapunovResidual: number;
+  channelParityPassed: boolean;
+  quarantineReasons?: string[];
+  remediationAction?: string;
+}
+
+export interface IterationPerformanceStat {
+  iterationCount: number;
+  totalRuns: number;
+  successCount: number;
+  driftCount: number;
+  successRatePercent: number;
+  meanSemanticDelta: number;
+  meanLyapunovResidual: number;
+  utilityScore: number;
+}
+
+export interface RclIterationRecommendation {
+  optimalCount: number;
+  confidenceScore: number; // 0.0 - 1.0
+  expectedSuccessRatePercent: number;
+  projectedDriftDelta: number;
+  projectedLyapunovResidual: number;
+  reasoning: string;
+  iterationStats: IterationPerformanceStat[];
+}
+
+export interface ParallelShadowState {
+  twinId: string;
+  twinName: string;
+  status: 'SYNCHRONIZED' | 'OBSERVING' | 'SIMULATING';
+  lastObservedRunId: string | null;
+  learningVelocity: number; // dG/dt (epistemic growth velocity 0.0 - 1.0)
+  totalRunsAnalyzed: number;
+  accumulatedTheoremsCount: number;
+  synthesisDriftPreventionRate: number;
+  channelDriftDetectionRate: number;
+  discoveredTheorems: LearnedMetaTheorem[];
+  counterfactuals: CounterfactualExperiment[];
+  shadowLatticeNodes: {
+    id: string;
+    label: string;
+    type: 'meta_axiom' | 'learned_heuristic' | 'rejection_boundary' | 'drift_detector';
+    weight: number;
+  }[];
+  lastSyncTimestamp: number;
+  appliedToPrimaryCount: number;
 }
 
 export interface PersistentSessionMemory {

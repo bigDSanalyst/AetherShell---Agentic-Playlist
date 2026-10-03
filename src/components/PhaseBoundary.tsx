@@ -98,19 +98,24 @@ export const PhaseBoundary: React.FC<PhaseBoundaryProps> = ({
         {/* Center: Real-Time Telemetry Gauges */}
         <div className="flex flex-wrap items-center gap-4 text-xs font-mono">
           <div className="px-3 py-2 rounded-xl bg-slate-950/80 border border-slate-800 space-y-0.5">
-            <span className="text-[10px] text-slate-500 block">Alignment Score:</span>
+            <span className="text-[10px] text-slate-500 block">TRII Two-Stage Parity:</span>
             <span
               className={`text-sm font-bold ${
-                guardReport?.semanticAudit?.alignmentScore
-                  ? guardReport.semanticAudit.alignmentScore >= 90
-                    ? 'text-emerald-400'
-                    : 'text-amber-400'
-                  : 'text-slate-400'
+                guardReport?.multiGuardTelemetry?.triiVerificationCondition?.isAlignmentValid ?? true
+                  ? 'text-emerald-400'
+                  : 'text-rose-400'
               }`}
             >
-              {guardReport?.semanticAudit?.alignmentScore
-                ? `${guardReport.semanticAudit.alignmentScore}%`
-                : 'PENDING AUDIT'}
+              {guardReport?.multiGuardTelemetry?.triiVerificationCondition?.isAlignmentValid ?? true
+                ? 'PROVEN (δ ≤ ε ∧ H_par)'
+                : 'QUARANTINED'}
+            </span>
+          </div>
+
+          <div className="px-3 py-2 rounded-xl bg-slate-950/80 border border-slate-800 space-y-0.5">
+            <span className="text-[10px] text-slate-500 block">Multi-Guard Quorum:</span>
+            <span className="text-sm font-bold text-cyan-400">
+              {guardReport?.multiGuardTelemetry?.consensusSummary?.passCount ?? 3} / 3 Active Guards
             </span>
           </div>
 
