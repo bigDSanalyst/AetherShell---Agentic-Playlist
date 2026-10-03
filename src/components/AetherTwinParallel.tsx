@@ -48,175 +48,11 @@ import {
   absorbRunIntoTwin,
 } from '../services/api';
 
-const LOCAL_LOGIC_STATES_KEY = 'AETHER_TWIN_LOGIC_STATES_HISTORY_V3';
+// V4: earlier versions were pre-filled with invented runs; do not reuse them.
+const LOCAL_LOGIC_STATES_KEY = 'AETHER_TWIN_LOGIC_STATES_HISTORY_V4';
 
-// Seed initial realistic empirical runs demonstrating convergence across iterations
-const SEED_LOGIC_STATES: TwinLogicStateRecord[] = [
-  {
-    id: 'STATE-RUN-01',
-    timestamp: Date.now() - 3600000 * 24,
-    videoTitle: 'Quantum Epistemics & Innershell Logic Ingestion',
-    logicId: 'LOGIC-ORDER-N1-A',
-    summary: 'Single-pass preliminary invariant extraction without reflexive harmonization.',
-    classification: 'DRIFTED_SYNTHESIS',
-    rclIterationCount: 1,
-    semanticDistanceDelta: 0.082,
-    epsilonThreshold: 0.05,
-    alignmentScore: 78,
-    lyapunovResidual: 0.088,
-    channelParityPassed: true,
-    quarantineReasons: ['Semantic distance δ(Ls, T) = 0.082 exceeds tolerance ε = 0.050.'],
-    remediationAction: 'Increase reflexive iterations to allow Lyapunov stabilization.',
-  },
-  {
-    id: 'STATE-RUN-02',
-    timestamp: Date.now() - 3600000 * 20,
-    videoTitle: 'Quantum Epistemics & Innershell Logic Ingestion',
-    logicId: 'LOGIC-ORDER-N1-B',
-    summary: 'Single-pass workflow synthesis without multi-cycle fixed-point testing.',
-    classification: 'DRIFTED_SYNTHESIS',
-    rclIterationCount: 1,
-    semanticDistanceDelta: 0.076,
-    epsilonThreshold: 0.05,
-    alignmentScore: 81,
-    lyapunovResidual: 0.079,
-    channelParityPassed: true,
-    quarantineReasons: ['Ungrounded extrapolations detected in workflow steps.'],
-    remediationAction: 'Requires multi-loop convergence.',
-  },
-  {
-    id: 'STATE-RUN-03',
-    timestamp: Date.now() - 3600000 * 18,
-    videoTitle: 'Autonomous Agentic Governance & Formal Proofs',
-    logicId: 'LOGIC-ORDER-N2-A',
-    summary: 'Two-cycle iterative refinement. Stabilized basic state mutations.',
-    classification: 'SUCCESSFUL',
-    rclIterationCount: 2,
-    semanticDistanceDelta: 0.042,
-    epsilonThreshold: 0.05,
-    alignmentScore: 91,
-    lyapunovResidual: 0.038,
-    channelParityPassed: true,
-  },
-  {
-    id: 'STATE-RUN-04',
-    timestamp: Date.now() - 3600000 * 15,
-    videoTitle: 'Autonomous Agentic Governance & Formal Proofs',
-    logicId: 'LOGIC-ORDER-N2-B',
-    summary: 'Two-cycle reasoning. Slight token leakage across phase boundary.',
-    classification: 'DRIFTED_SYNTHESIS',
-    rclIterationCount: 2,
-    semanticDistanceDelta: 0.054,
-    epsilonThreshold: 0.05,
-    alignmentScore: 86,
-    lyapunovResidual: 0.049,
-    channelParityPassed: true,
-    quarantineReasons: ['Borderline drift: δ = 0.054 just exceeds ε = 0.050.'],
-    remediationAction: 'Third loop needed to damp residual semantic energy.',
-  },
-  {
-    id: 'STATE-RUN-05',
-    timestamp: Date.now() - 3600000 * 12,
-    videoTitle: 'Cryptographic Watermarking & Phase Boundary Security',
-    logicId: 'LOGIC-ORDER-N3-A',
-    summary: 'Three-cycle reflexive convergence. Invariants Orders 0-3 converged.',
-    classification: 'SUCCESSFUL',
-    rclIterationCount: 3,
-    semanticDistanceDelta: 0.012,
-    epsilonThreshold: 0.05,
-    alignmentScore: 98,
-    lyapunovResidual: 0.011,
-    channelParityPassed: true,
-  },
-  {
-    id: 'STATE-RUN-06',
-    timestamp: Date.now() - 3600000 * 9,
-    videoTitle: 'Cryptographic Watermarking & Phase Boundary Security',
-    logicId: 'LOGIC-ORDER-N3-B',
-    summary: 'Three-cycle synthesis. Perfect fixed-point harmony with direct transcript.',
-    classification: 'SUCCESSFUL',
-    rclIterationCount: 3,
-    semanticDistanceDelta: 0.014,
-    epsilonThreshold: 0.05,
-    alignmentScore: 97,
-    lyapunovResidual: 0.013,
-    channelParityPassed: true,
-  },
-  {
-    id: 'STATE-RUN-07',
-    timestamp: Date.now() - 3600000 * 6,
-    videoTitle: 'Reflexive State Invariants & Dual-Shell Protocol',
-    logicId: 'LOGIC-ORDER-N3-C',
-    summary: 'Three-cycle convergence. Hoare triples fully validated under Lyapunov bound.',
-    classification: 'SUCCESSFUL',
-    rclIterationCount: 3,
-    semanticDistanceDelta: 0.011,
-    epsilonThreshold: 0.05,
-    alignmentScore: 99,
-    lyapunovResidual: 0.009,
-    channelParityPassed: true,
-  },
-  {
-    id: 'STATE-RUN-08',
-    timestamp: Date.now() - 3600000 * 4,
-    videoTitle: 'Reflexive State Invariants & Dual-Shell Protocol',
-    logicId: 'LOGIC-ORDER-N4-A',
-    summary: 'Four-cycle synthesis. Deep Hoare invariant verification.',
-    classification: 'SUCCESSFUL',
-    rclIterationCount: 4,
-    semanticDistanceDelta: 0.015,
-    epsilonThreshold: 0.05,
-    alignmentScore: 96,
-    lyapunovResidual: 0.014,
-    channelParityPassed: true,
-  },
-  {
-    id: 'STATE-RUN-09',
-    timestamp: Date.now() - 3600000 * 3,
-    videoTitle: 'Reflexive State Invariants & Dual-Shell Protocol',
-    logicId: 'LOGIC-ORDER-N4-B',
-    summary: 'Four-cycle synthesis. Minimal residual gains over 3 cycles.',
-    classification: 'SUCCESSFUL',
-    rclIterationCount: 4,
-    semanticDistanceDelta: 0.018,
-    epsilonThreshold: 0.05,
-    alignmentScore: 95,
-    lyapunovResidual: 0.016,
-    channelParityPassed: true,
-  },
-  {
-    id: 'STATE-RUN-10',
-    timestamp: Date.now() - 3600000 * 2,
-    videoTitle: 'Decompression Proofs & Zero-Drift Membranes',
-    logicId: 'LOGIC-ORDER-N5-A',
-    summary: 'Five-cycle synthesis. Over-specification occurred, introducing speculative terms.',
-    classification: 'DRIFTED_SYNTHESIS',
-    rclIterationCount: 5,
-    semanticDistanceDelta: 0.052,
-    epsilonThreshold: 0.05,
-    alignmentScore: 88,
-    lyapunovResidual: 0.046,
-    channelParityPassed: true,
-    quarantineReasons: ['Over-fitting drift: 5 iterations caused speculative axiomatic drift beyond transcript.'],
-    remediationAction: 'Cap iterations at 3 or 4 to avoid over-specification.',
-  },
-  {
-    id: 'STATE-RUN-11',
-    timestamp: Date.now() - 3600000 * 1,
-    videoTitle: 'Decompression Proofs & Zero-Drift Membranes',
-    logicId: 'LOGIC-ORDER-N6-A',
-    summary: 'Six-cycle synthesis. High latency and circular reasoning detected.',
-    classification: 'DRIFTED_SYNTHESIS',
-    rclIterationCount: 6,
-    semanticDistanceDelta: 0.068,
-    epsilonThreshold: 0.05,
-    alignmentScore: 82,
-    lyapunovResidual: 0.062,
-    channelParityPassed: true,
-    quarantineReasons: ['Severe over-iteration drift: circular invariants created ungrounded postulates.'],
-    remediationAction: 'Enforce mathematical sweet spot at N=3.',
-  },
-];
+// History holds only runs observed in this browser; it starts empty.
+const SEED_LOGIC_STATES: TwinLogicStateRecord[] = [];
 
 interface AetherTwinParallelProps {
   innershellLogic: InnershellLogic | null;
@@ -259,15 +95,12 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
 
   // Counterfactual Lab Form
   const [customHypothesis, setCustomHypothesis] = useState(
-    'Tightening semantic distance epsilon from 0.05 to 0.02 reduces synthesis drift by 40%'
+    'How many observed runs would pass the word-grounding check with a stricter limit?'
   );
   const [paramName, setParamName] = useState('epsilonThreshold');
-  const [baseVal, setBaseVal] = useState('0.05');
-  const [cfVal, setCfVal] = useState('0.02');
+  const [baseVal, setBaseVal] = useState('0.5');
+  const [cfVal, setCfVal] = useState('0.4');
 
-  // Synthetic Test Run Modal / Form
-  const [simTestIterations, setSimTestIterations] = useState(3);
-  const [isSimulatingRun, setIsSimulatingRun] = useState(false);
 
   // Trend Visualization States
   const [trendWindow, setTrendWindow] = useState<'ALL' | 'LAST_10' | 'LAST_20'>('ALL');
@@ -319,8 +152,8 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
       if (res.success) {
         setShadowState(res.shadowState);
         showToast(
-          `Counterfactual simulation completed: Score ${res.experiment.simulatedScore}% (${res.experiment.deltaImprovement > 0 ? '+' : ''}${res.experiment.deltaImprovement}%)`,
-          'success'
+          `Replay: ${res.experiment.baselineScore}% → ${res.experiment.simulatedScore}% of observed runs pass the grounding check`,
+          'info'
         );
       }
     } catch (err: any) {
@@ -341,12 +174,8 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
           ...sessionMemory.memoryLattice,
           shadowInvariantsApplied: res.shadowState.appliedToPrimaryCount,
           shadowSyncTimestamp: Date.now(),
-          parallelEpsilonTuned: 0.02,
         });
-        showToast(
-          'Synchronized shadow meta-invariants into Primary AetherShell runtime!',
-          'success'
-        );
+        showToast(res.message, 'info');
       }
     } catch (err: any) {
       showToast(`Sync failed: ${err.message}`, 'error');
@@ -369,9 +198,12 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
         else classification = 'DRIFTED_SYNTHESIS';
       }
 
-      const delta = guardReport.multiGuardTelemetry?.guard2SemanticAuditor?.semanticDistanceDelta ?? 0.012;
-      const eps = guardReport.multiGuardTelemetry?.guard2SemanticAuditor?.epsilonThreshold ?? 0.05;
-      const lyapunov = guardReport.multiGuardTelemetry?.guard3FormalOracle?.lyapunovResidual ?? 0.012;
+      const g2 = guardReport.multiGuardTelemetry?.guard2SemanticAuditor;
+      if (!g2) return; // nothing measured, nothing to record
+      const delta = g2.semanticDistanceDelta;
+      const eps = g2.epsilonThreshold;
+      // Model-estimated degradation index from the LLM review (not a measurement).
+      const lyapunov = guardReport.multiGuardTelemetry?.guard3FormalOracle?.lyapunovResidual ?? 1;
 
       const newRecord: TwinLogicStateRecord = {
         id: `STATE-LIVE-${Date.now().toString(36).toUpperCase()}`,
@@ -383,7 +215,7 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
         rclIterationCount: activeRclIterations,
         semanticDistanceDelta: delta,
         epsilonThreshold: eps,
-        alignmentScore: guardReport.semanticAudit.alignmentScore ?? 95,
+        alignmentScore: guardReport.semanticAudit.alignmentScore ?? 0,
         lyapunovResidual: lyapunov,
         channelParityPassed: guardReport.watermarkSignatureStatus === 'VERIFIED',
         quarantineReasons: guardReport.semanticAudit.boundaryDecision !== 'APPROVED'
@@ -421,8 +253,8 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
           successCount: 0,
           driftCount: 0,
           successRatePercent: 0,
-          meanSemanticDelta: 0.05,
-          meanLyapunovResidual: 0.05,
+          meanSemanticDelta: 0,
+          meanLyapunovResidual: 0,
           utilityScore: 0,
         };
       }
@@ -432,9 +264,8 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
       const meanDelta = runs.reduce((acc, r) => acc + r.semanticDistanceDelta, 0) / total;
       const meanLyap = runs.reduce((acc, r) => acc + r.lyapunovResidual, 0) / total;
 
-      // Utility function: Reward high success rate, heavily penalize semantic drift & excess iteration overhead
-      // Utility = (SuccessRate * 1.0) - (meanDelta * 600) - (count * 2.2)
-      const utility = Number((successRate - meanDelta * 600 - count * 2.2).toFixed(1));
+      // Utility: observed pass rate, with a small penalty per extra model pass (cost/latency).
+      const utility = Number((successRate - count * 2).toFixed(1));
 
       return {
         iterationCount: count,
@@ -448,30 +279,35 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
       };
     });
 
-    // Find the iteration count with highest utility among those with runs
+    // Pick the iteration count with the best observed utility. Needs real runs.
     const validStats = stats.filter((s) => s.totalRuns > 0);
     const sorted = [...validStats].sort((a, b) => b.utilityScore - a.utilityScore);
-    const optimal = sorted.length > 0 ? sorted[0] : stats[2]; // Default to 3 if no data
+    const optimal = sorted[0];
+    const totalObserved = validStats.reduce((acc, s) => acc + s.totalRuns, 0);
 
-    const optimalCount = optimal.iterationCount;
-    const confidence = Math.min(0.98, Number((0.85 + (optimal.totalRuns * 0.02)).toFixed(2)));
-
-    const reasoning = optimalCount === 3
-      ? 'At N = 3 iterations, the RCL engine reaches its mathematical fixed point. It maximizes empirical success (95.8%) while maintaining the lowest semantic divergence (δ = 0.012) and asymptotic Lyapunov stability (V = 0.011). Iterations beyond N=4 yield diminishing returns and introduce speculative extrapolation risk.'
-      : optimalCount === 4
-      ? 'At N = 4 iterations, deep Hoare verification converges with robust drift mitigation (96.2% success rate) and minimal entropy residual.'
-      : `Based on ${optimal.totalRuns} empirical runs, N = ${optimalCount} yields the highest convergence utility score (${optimal.utilityScore}).`;
+    if (!optimal) {
+      return {
+        optimalCount: activeRclIterations,
+        confidenceScore: 0,
+        expectedSuccessRatePercent: 0,
+        projectedDriftDelta: 0,
+        projectedLyapunovResidual: 0,
+        reasoning: 'No guard runs observed yet. Run the RCL cycle and Guard Shell to collect data; no recommendation is made without it.',
+        iterationStats: stats,
+      };
+    }
 
     return {
-      optimalCount,
-      confidenceScore: confidence,
-      expectedSuccessRatePercent: optimal.successRatePercent || 95.8,
-      projectedDriftDelta: optimal.meanSemanticDelta || 0.013,
-      projectedLyapunovResidual: optimal.meanLyapunovResidual || 0.011,
-      reasoning,
+      optimalCount: optimal.iterationCount,
+      // Rough sample-size indicator, not a statistical confidence interval.
+      confidenceScore: Number((optimal.totalRuns / (optimal.totalRuns + 5)).toFixed(2)),
+      expectedSuccessRatePercent: optimal.successRatePercent,
+      projectedDriftDelta: optimal.meanSemanticDelta,
+      projectedLyapunovResidual: optimal.meanLyapunovResidual,
+      reasoning: `Based on ${optimal.totalRuns} observed run(s) at N = ${optimal.iterationCount} (${totalObserved} total): ${optimal.successRatePercent}% passed the Guard Shell, mean grounding distance δ = ${optimal.meanSemanticDelta}. Small samples are noisy.`,
       iterationStats: stats,
     };
-  }, [logicStatesHistory]);
+  }, [logicStatesHistory, activeRclIterations]);
 
   // Handle Apply Optimal Iteration Count
   const handleApplyOptimal = () => {
@@ -487,65 +323,6 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
         'success'
       );
     }
-  };
-
-  // Run Synthetic Empirical Run to test recommendation dynamics
-  const handleSimulateSyntheticRun = () => {
-    setIsSimulatingRun(true);
-    setTimeout(() => {
-      const count = simTestIterations;
-      // Synthesize realistic delta based on count
-      let delta = 0.012;
-      let classification: 'SUCCESSFUL' | 'DRIFTED_SYNTHESIS' = 'SUCCESSFUL';
-      let lyap = 0.012;
-
-      if (count === 1) {
-        delta = Number((0.070 + Math.random() * 0.02).toFixed(3));
-        classification = 'DRIFTED_SYNTHESIS';
-        lyap = 0.082;
-      } else if (count === 2) {
-        delta = Number((0.040 + Math.random() * 0.02).toFixed(3));
-        classification = delta > 0.05 ? 'DRIFTED_SYNTHESIS' : 'SUCCESSFUL';
-        lyap = 0.042;
-      } else if (count === 3) {
-        delta = Number((0.010 + Math.random() * 0.008).toFixed(3));
-        classification = 'SUCCESSFUL';
-        lyap = 0.011;
-      } else if (count === 4) {
-        delta = Number((0.014 + Math.random() * 0.010).toFixed(3));
-        classification = 'SUCCESSFUL';
-        lyap = 0.015;
-      } else {
-        delta = Number((0.050 + Math.random() * 0.025).toFixed(3));
-        classification = 'DRIFTED_SYNTHESIS';
-        lyap = 0.055;
-      }
-
-      const syntheticRecord: TwinLogicStateRecord = {
-        id: `STATE-SIM-${Date.now().toString(36).toUpperCase()}`,
-        timestamp: Date.now(),
-        videoTitle: 'Simulated Innershell Evaluation Sweep',
-        logicId: `SIM-LOGIC-N${count}-${Date.now().toString(36).slice(-4)}`,
-        summary: `Empirical simulation evaluating N=${count} reflexive cycles.`,
-        classification,
-        rclIterationCount: count,
-        semanticDistanceDelta: delta,
-        epsilonThreshold: 0.05,
-        alignmentScore: classification === 'SUCCESSFUL' ? Math.round(94 + Math.random() * 5) : Math.round(80 + Math.random() * 8),
-        lyapunovResidual: lyap,
-        channelParityPassed: true,
-        quarantineReasons: classification !== 'SUCCESSFUL'
-          ? [`Synthesis drift: δ = ${delta} exceeded threshold ε = 0.050.`]
-          : undefined,
-      };
-
-      setLogicStatesHistory((prev) => [syntheticRecord, ...prev]);
-      setIsSimulatingRun(false);
-      showToast(
-        `Recorded synthetic run for N=${count} (Verdict: ${classification === 'SUCCESSFUL' ? 'SUCCESS' : 'DRIFT'})`,
-        classification === 'SUCCESSFUL' ? 'success' : 'error'
-      );
-    }, 400);
   };
 
   // Filtered Logic States List
@@ -584,6 +361,9 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
     return chronologicalRuns;
   }, [chronologicalRuns, trendWindow]);
 
+  // Grounding limit ε as reported by the server on the most recent run.
+  const eps = logicStatesHistory[0]?.epsilonThreshold ?? 0.5;
+
   // Convergence & Stabilization Analytics
   const trendAnalytics = useMemo(() => {
     const total = displayedTrendRuns.length;
@@ -591,13 +371,13 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
       return {
         total: 0,
         decayPercent: 0,
-        recentMean: 0.012,
-        earlyMean: 0.080,
-        varianceStdDev: 0.005,
-        stabilizationStatus: 'STABILIZED' as const,
-        successRateRecent: 100,
-        successfulRunsMean: 0.013,
-        driftedRunsMean: 0.070,
+        recentMean: 0,
+        earlyMean: 0,
+        varianceStdDev: 0,
+        stabilizationStatus: 'NO_DATA' as const,
+        successRateRecent: 0,
+        successfulRunsMean: 0,
+        driftedRunsMean: 0,
       };
     }
 
@@ -606,11 +386,11 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
 
     const successfulRunsMean = successful.length > 0
       ? Number((successful.reduce((a, b) => a + b.semanticDistanceDelta, 0) / successful.length).toFixed(4))
-      : 0.012;
+      : 0;
 
     const driftedRunsMean = drifted.length > 0
       ? Number((drifted.reduce((a, b) => a + b.semanticDistanceDelta, 0) / drifted.length).toFixed(4))
-      : 0.075;
+      : 0;
 
     // Compare early window (first 35%) vs recent window (last 35%)
     const splitCount = Math.max(2, Math.floor(total * 0.35));
@@ -632,8 +412,10 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
     const recentSuccessCount = recent.filter((r) => r.classification === 'SUCCESSFUL').length;
     const successRateRecent = Math.round((recentSuccessCount / recent.length) * 100);
 
-    let stabilizationStatus: 'STABILIZED' | 'CONVERGING' | 'OSCILLATING' = 'STABILIZED';
-    if (recentMean <= 0.025 && varianceStdDev <= 0.018 && successRateRecent >= 85) {
+    let stabilizationStatus: 'STABILIZED' | 'CONVERGING' | 'OSCILLATING' | 'NO_DATA' = 'STABILIZED';
+    if (total < 4) {
+      stabilizationStatus = 'NO_DATA';
+    } else if (successRateRecent >= 85 && varianceStdDev <= 0.05) {
       stabilizationStatus = 'STABILIZED';
     } else if (decayPercent < -15) {
       stabilizationStatus = 'CONVERGING';
@@ -666,10 +448,10 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
     const width = right - left;
     const height = bottom - top;
 
-    // Y scale: delta from 0.00 to 0.10
+    // Y scale: δ from 0 to 1 (δ = 1 − grounded share)
     const getY = (val: number) => {
-      const clamped = Math.max(0, Math.min(0.10, val));
-      return bottom - (clamped / 0.10) * height;
+      const clamped = Math.max(0, Math.min(1, val));
+      return bottom - clamped * height;
     };
 
     // X scale: index from 0 to N - 1
@@ -691,7 +473,7 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
     const sequencePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
 
     // Exponential Moving Average points & path (alpha = 0.35)
-    let currentEma = points[0]?.run.semanticDistanceDelta || 0.05;
+    let currentEma = points[0]?.run.semanticDistanceDelta ?? 0;
     const emaAlpha = 0.35;
     const emaPoints = points.map((p) => {
       currentEma = emaAlpha * p.run.semanticDistanceDelta + (1 - emaAlpha) * currentEma;
@@ -770,14 +552,14 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
           <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800/80 space-y-1">
             <span className="text-slate-400 text-[10px] uppercase block">Projected Semantic δ</span>
             <strong className="text-indigo-300 font-bold text-sm">
-              δ = {recommendation.projectedDriftDelta} ≤ 0.050
+              δ = {recommendation.projectedDriftDelta} (limit {eps})
             </strong>
           </div>
 
           <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800/80 space-y-1">
-            <span className="text-slate-400 text-[10px] uppercase block">Lyapunov Residual</span>
+            <span className="text-slate-400 text-[10px] uppercase block">Model degradation est.</span>
             <strong className="text-purple-300 font-bold text-sm">
-              V(x) = {recommendation.projectedLyapunovResidual}
+              {recommendation.projectedLyapunovResidual}
             </strong>
           </div>
         </div>
@@ -829,7 +611,7 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
             <div className="flex flex-wrap items-center gap-4 text-[11px] text-slate-400 pt-1">
               <span>Expected Success Rate: <strong className="text-emerald-400">{recommendation.expectedSuccessRatePercent}%</strong></span>
               <span>Projected Semantic Drift: <strong className="text-cyan-400">δ = {recommendation.projectedDriftDelta}</strong></span>
-              <span>Projected Lyapunov Residual: <strong className="text-purple-300">V(x) = {recommendation.projectedLyapunovResidual}</strong></span>
+              <span>Mean model degradation estimate: <strong className="text-purple-300">{recommendation.projectedLyapunovResidual}</strong></span>
             </div>
           </div>
 
@@ -918,7 +700,7 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
 
                     <div className="flex items-center justify-between pt-1 text-slate-400">
                       <span>Mean δ:</span>
-                      <span className={stat.meanSemanticDelta <= 0.05 ? 'text-cyan-300' : 'text-rose-400'}>
+                      <span className={stat.meanSemanticDelta <= eps ? 'text-cyan-300' : 'text-rose-400'}>
                         {stat.meanSemanticDelta}
                       </span>
                     </div>
@@ -954,15 +736,17 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
                       : 'bg-amber-950 text-amber-300 border border-amber-700/60'
                   }`}
                 >
-                  {trendAnalytics.stabilizationStatus === 'STABILIZED'
-                    ? 'Asymptotically Stabilized'
+                  {trendAnalytics.stabilizationStatus === 'NO_DATA'
+                    ? 'Not enough runs'
+                    : trendAnalytics.stabilizationStatus === 'STABILIZED'
+                    ? 'Recent runs mostly pass'
                     : trendAnalytics.stabilizationStatus === 'CONVERGING'
-                    ? 'Decaying Toward Fixed Point'
-                    : 'Monitoring Drift Variance'}
+                    ? 'δ trending down'
+                    : 'Mixed results'}
                 </span>
               </h3>
               <p className="text-xs text-slate-400">
-                Visualizes sequential execution history to prove whether the Innershell RCL engine is stabilizing asymptotically below the phase boundary tolerance (ε = 0.050).
+                Grounding distance δ of each observed run, in order, against the guard's limit (ε = {eps}). Shows what happened; it does not prove convergence.
               </p>
             </div>
           </div>
@@ -1059,7 +843,7 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
               δ_recent = {trendAnalytics.recentMean}
             </strong>
             <span className="text-[10px] text-emerald-400 block truncate">
-              {trendAnalytics.recentMean <= 0.05 ? '✓ Strictly Bounded (≤ 0.050)' : '⚠ Drift Alert'}
+              {trendAnalytics.total === 0 ? 'No runs yet' : trendAnalytics.recentMean <= eps ? `Within limit (≤ ${eps})` : 'Above limit'}
             </span>
           </div>
 
@@ -1104,11 +888,11 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
             <div className="flex flex-wrap items-center gap-4 text-[10px]">
               <div className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400/60"></span>
-                <span className="text-slate-300">Successful Run (δ ≤ 0.050)</span>
+                <span className="text-slate-300">Passed run</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shadow-sm shadow-rose-500/60"></span>
-                <span className="text-slate-300">Drifted Run (δ &gt; 0.050)</span>
+                <span className="text-slate-300">Failed run</span>
               </div>
               {showMovingAverage && (
                 <div className="flex items-center gap-1.5">
@@ -1118,7 +902,7 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
               )}
               <div className="flex items-center gap-1.5">
                 <div className="w-4 h-0.5 bg-rose-500"></div>
-                <span className="text-rose-400 font-bold">ε = 0.050 Threshold</span>
+                <span className="text-rose-400 font-bold">ε = {eps} limit</span>
               </div>
             </div>
           </div>
@@ -1152,17 +936,18 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
 
               {/* Background Shaded Regions */}
               {/* Drift Zone (top: y=30 to y=112.5) */}
-              <rect x="60" y="30" width="700" height="82.5" fill="url(#driftZoneGradient)" />
+              <rect x="60" y="30" width="700" height={165 - eps * 165} fill="url(#driftZoneGradient)" />
               {/* Safe Zone (bottom: y=112.5 to y=195) */}
-              <rect x="60" y="112.5" width="700" height="82.5" fill="url(#safeZoneGradient)" />
+              <rect x="60" y={195 - eps * 165} width="700" height={eps * 165} fill="url(#safeZoneGradient)" />
 
               {/* Horizontal Gridlines & Y-Axis Scale */}
               {[
-                { val: 0.10, label: '0.100', y: 30 },
-                { val: 0.075, label: '0.075', y: 71.25 },
-                { val: 0.05, label: '0.050 (ε)', y: 112.5, isThreshold: true },
-                { val: 0.025, label: '0.025', y: 153.75 },
-                { val: 0.00, label: '0.000', y: 195 },
+                { val: 1, label: '1.00', y: 30 },
+                { val: 0.75, label: '0.75', y: 71.25 },
+                { val: 0.5, label: '0.50', y: 112.5 },
+                { val: 0.25, label: '0.25', y: 153.75 },
+                { val: 0, label: '0.00', y: 195 },
+                { val: eps, label: `${eps} (ε)`, y: 195 - eps * 165, isThreshold: true },
               ].map((grid, gIdx) => (
                 <g key={gIdx}>
                   <line
@@ -1191,14 +976,14 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
               {/* Epsilon Threshold Label Text in Chart */}
               <text
                 x="755"
-                y="108"
+                y={191 - eps * 165}
                 textAnchor="end"
                 fill="#f43f5e"
                 fontSize="9"
                 fontFamily="monospace"
                 fontWeight="bold"
               >
-                CRITICAL PHASE BOUNDARY THRESHOLD (ε = 0.050)
+                GROUNDING LIMIT (ε = {eps})
               </text>
 
               {/* Sequential Trajectory Line */}
@@ -1315,12 +1100,12 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
                       </div>
                       <div>
                         <span className="text-slate-400">Divergence δ: </span>
-                        <strong className={item.semanticDistanceDelta <= 0.05 ? 'text-emerald-400' : 'text-rose-400'}>
-                          {item.semanticDistanceDelta} {item.semanticDistanceDelta <= 0.05 ? '≤ 0.050' : '> 0.050 (Drift)'}
+                        <strong className={item.semanticDistanceDelta <= item.epsilonThreshold ? 'text-emerald-400' : 'text-rose-400'}>
+                          {item.semanticDistanceDelta} {item.semanticDistanceDelta <= item.epsilonThreshold ? `≤ ${item.epsilonThreshold}` : `> ${item.epsilonThreshold}`}
                         </strong>
                       </div>
                       <div>
-                        <span className="text-slate-400">Lyapunov: </span>
+                        <span className="text-slate-400">Model est.: </span>
                         <strong className="text-purple-300">{item.lyapunovResidual}</strong>
                       </div>
                       <span
@@ -1364,7 +1149,7 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono">
                 <div>
                   <span className="text-slate-400">Semantic Divergence: </span>
-                  <strong className={selectedRunForInspection.semanticDistanceDelta <= 0.05 ? 'text-emerald-400' : 'text-rose-400'}>
+                  <strong className={selectedRunForInspection.semanticDistanceDelta <= selectedRunForInspection.epsilonThreshold ? 'text-emerald-400' : 'text-rose-400'}>
                     δ = {selectedRunForInspection.semanticDistanceDelta}
                   </strong>
                 </div>
@@ -1377,8 +1162,8 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
                   <strong className="text-emerald-400">{selectedRunForInspection.alignmentScore}%</strong>
                 </div>
                 <div>
-                  <span className="text-slate-400">Lyapunov Residual: </span>
-                  <strong className="text-purple-300">V(x) = {selectedRunForInspection.lyapunovResidual}</strong>
+                  <span className="text-slate-400">Model degradation est.: </span>
+                  <strong className="text-purple-300">{selectedRunForInspection.lyapunovResidual}</strong>
                 </div>
               </div>
 
@@ -1406,14 +1191,12 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
         <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-mono text-slate-300">
           <div className="flex items-center gap-2">
             <span className="font-serif italic text-cyan-400 text-sm">
-              lim(t→∞) δ(t) = 0.012 ± 0.003 ≤ ε = 0.050
+              recent mean δ = {trendAnalytics.recentMean} ± {trendAnalytics.varianceStdDev} over {trendAnalytics.total} run(s), limit ε = {eps}
             </span>
-            <span className="text-slate-500 hidden md:inline">| Contractive Fixed-Point Convergence</span>
           </div>
 
-          <div className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            <span>Asymptotic Stability Verified Across Sequential Ingestion Loops</span>
+          <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
+            <span>Observed data only; small samples are noisy.</span>
           </div>
         </div>
       </div>
@@ -1440,32 +1223,6 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
 
           {/* Quick Actions for Logic States */}
           <div className="flex items-center gap-2 font-mono text-xs">
-            {/* Synthetic Test Simulation Tool */}
-            <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-950 border border-slate-800">
-              <span className="text-slate-400 text-[10px] pl-1">Test N:</span>
-              <select
-                value={simTestIterations}
-                onChange={(e) => setSimTestIterations(Number(e.target.value))}
-                className="bg-transparent text-cyan-300 text-xs focus:outline-none cursor-pointer"
-              >
-                <option value={1} className="bg-slate-900">1 iter (High Drift)</option>
-                <option value={2} className="bg-slate-900">2 iters (Borderline)</option>
-                <option value={3} className="bg-slate-900">3 iters (Optimal)</option>
-                <option value={4} className="bg-slate-900">4 iters (Deep)</option>
-                <option value={5} className="bg-slate-900">5 iters (Over-fit)</option>
-                <option value={6} className="bg-slate-900">6 iters (Speculative)</option>
-              </select>
-              <button
-                onClick={handleSimulateSyntheticRun}
-                disabled={isSimulatingRun}
-                className="px-2 py-1 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-[10px] transition-all flex items-center gap-1"
-                title="Inject synthetic evaluation run to observe suggestion updates"
-              >
-                <PlusCircle className="w-3 h-3" />
-                <span>{isSimulatingRun ? 'Testing...' : 'Simulate Run'}</span>
-              </button>
-            </div>
-
             <button
               onClick={() => {
                 const blob = new Blob([JSON.stringify(logicStatesHistory, null, 2)], { type: 'application/json' });
@@ -1588,8 +1345,8 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px] pt-1 border-t border-slate-900 text-slate-400">
                     <div>
                       <span>Semantic δ: </span>
-                      <strong className={item.semanticDistanceDelta <= 0.05 ? 'text-emerald-400' : 'text-rose-400'}>
-                        {item.semanticDistanceDelta} {item.semanticDistanceDelta <= 0.05 ? '≤ 0.050' : '> 0.050 (Drift)'}
+                      <strong className={item.semanticDistanceDelta <= item.epsilonThreshold ? 'text-emerald-400' : 'text-rose-400'}>
+                        {item.semanticDistanceDelta} {item.semanticDistanceDelta <= item.epsilonThreshold ? `≤ ${item.epsilonThreshold}` : `> ${item.epsilonThreshold}`}
                       </strong>
                     </div>
 
@@ -1599,7 +1356,7 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
                     </div>
 
                     <div>
-                      <span>Lyapunov Energy: </span>
+                      <span>Model degradation est.: </span>
                       <strong className="text-purple-300">{item.lyapunovResidual}</strong>
                     </div>
 

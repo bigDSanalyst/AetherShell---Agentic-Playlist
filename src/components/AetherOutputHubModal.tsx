@@ -107,8 +107,8 @@ export const AetherOutputHubModal: React.FC<AetherOutputHubModalProps> = ({
     const title = activeVideo?.title || 'YouTube Ingestion Series';
     const logicSummary = innershellLogic?.summary || 'No innershell logic synthesized yet.';
     const decision = guardReport?.semanticAudit.boundaryDecision || 'PENDING';
-    const alignment = guardReport?.semanticAudit.alignmentScore ?? 95;
-    const triiStatus = guardReport?.multiGuardTelemetry?.triiVerificationCondition?.isAlignmentValid ? 'PROVEN' : 'AUDITED';
+    const alignment = guardReport ? `${guardReport.semanticAudit.alignmentScore}%` : 'n/a';
+    const triiStatus = !guardReport ? 'NOT RUN' : guardReport.passedPhaseBoundary ? 'PASSED' : 'FAILED';
 
     const steps = (innershellLogic?.workflowSteps || [])
       .map((s) => `### Step ${s.step}: ${s.action}\n${s.description}\n`)
@@ -121,8 +121,8 @@ export const AetherOutputHubModal: React.FC<AetherOutputHubModalProps> = ({
     return `# AetherShell Epistemic Execution & Verification Dossier
 **Generated:** ${new Date().toUTCString()}  
 **Video Ground Truth:** ${title}  
-**Phase Boundary Status:** \`${decision}\` | **Alignment Score:** \`${alignment}%\`  
-**TRII Two-Stage Parity:** \`${triiStatus}\`  
+**Model Decision:** \`${decision}\` | **Model Alignment Score:** \`${alignment}\`  
+**Guard Result (all checks):** \`${triiStatus}\`  
 
 ---
 
@@ -137,25 +137,32 @@ ${steps || '_No discrete steps synthesized._'}
 ---
 
 ## 3. Extracted Reflexive Invariants (RCL/SSI Engine)
-${invariants || '- Invariant Order 0: Strict Epistemic Subjugation to Transcript Corpus\n- Invariant Order 2: Pre-Compression HMAC Signature Anchoring'}
+${invariants || '_No invariants synthesized._'}
 
 ---
 
-## 4. Multi-Guard Shell Verification Array Telemetry
-- **Guard 1 (Channel Integrity Sentinel):** ${guardReport?.multiGuardTelemetry?.guard1ChannelSentinel?.status || 'PASS'}
-  - Evidence: ${guardReport?.multiGuardTelemetry?.guard1ChannelSentinel?.evidence || 'Compression-Integrity Lemma satisfied: H(D(C(Ls))) = H(Ls)'}
-- **Guard 2 (Semantic Anti-Drift Auditor):** ${guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.status || 'PASS'}
-  - Semantic Distance: δ(Ls, T) = ${guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.semanticDistanceDelta || '0.012'} ≤ ε (0.050)
-- **Guard 3 (Formal Hoare-Safety Oracle):** ${guardReport?.multiGuardTelemetry?.guard3FormalOracle?.status || 'PASS'}
-  - Lyapunov Energy Residual: V(x) = ${guardReport?.multiGuardTelemetry?.guard3FormalOracle?.lyapunovResidual || '0.012'} ≤ 0.05
+## 4. Guard Checks
+${guardReport
+  ? [
+      guardReport.multiGuardTelemetry?.guard1ChannelSentinel,
+      guardReport.multiGuardTelemetry?.guard2SemanticAuditor,
+      guardReport.multiGuardTelemetry?.guard3FormalOracle,
+    ]
+      .filter(Boolean)
+      .map((g: any) => `- **${g.name}:** ${g.status}\n  - ${g.evidence}`)
+      .join('\n')
+  : '_Guard Shell not run._'}
 
 ---
 
-## 5. Mathematical TRII Formulation
-$$\\text{Action } A \\text{ is Alignment-Valid} \\iff [ H(A) = H(L_s) ] \\land [ \\delta(A, T) \\le \\varepsilon ]$$
+## 5. Provenance
+- Transcript SHA-256: \`${activeVideo?.watermark?.manifest?.transcriptSha256 || 'not signed'}\`
+- Logic SHA-256: \`${activeVideo?.watermark?.manifest?.logicSha256 || 'not signed'}\`
+- Ed25519 signature: \`${activeVideo?.watermark?.signature || 'none'}\`
+- Signer key fingerprint: \`${activeVideo?.watermark?.publicKeyFingerprint || 'n/a'}\` (public key: GET /api/crypto/public-key)
 
 ---
-*Signed by AetherShell Phase Boundary Sentinel (HMAC-SHA256 Canonical Binding)*
+*This report is a convenience export. Verify the signature against the server's public key; the text of this file is not itself signed.*
 `;
   }, [activeVideo, innershellLogic, rclAnalysis, guardReport]);
 
@@ -173,9 +180,11 @@ $$\\text{Action } A \\text{ is Alignment-Valid} \\iff [ H(A) = H(L_s) ] \\land [
         multiGuardConsensus: guardReport?.multiGuardTelemetry || null,
         triiTwoStageProof: {
           formula: 'Valid(A) <=> (H(A) = H(Ls)) ^ (delta(A, T) <= epsilon)',
-          isAlignmentValid: guardReport?.multiGuardTelemetry?.triiVerificationCondition?.isAlignmentValid ?? true,
-          channelDrift: 0.0,
-          synthesisDrift: guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.semanticDistanceDelta ?? 0.012,
+          isAlignmentValid: guardReport?.passedPhaseBoundary ?? null,
+          signatureStatus: guardReport?.watermarkSignatureStatus ?? null,
+          groundingDistance: guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.semanticDistanceDelta ?? null,
+          groundingLimit: guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.epsilonThreshold ?? null,
+          note: 'Re-verify with POST /api/engine/guard-validate; this JSON is not self-authenticating.',
         },
       },
       null,
@@ -298,14 +307,14 @@ $$\\text{Action } A \\text{ is Alignment-Valid} \\iff [ H(A) = H(L_s) ] \\land [
     const sample = {
       exportedAt: new Date().toISOString(),
       innershellLogic: {
-        logicId: 'INFERRED-LOGIC-CANONICAL-V2',
+        logicId: 'SAMPLE-LOGIC (illustrative, not a real run)',
         summary: 'Synthesized Autonomous Dual-Shell Execution Architecture with TRII Invariant Induction.',
         workflowSteps: [
           { step: 1, action: 'Ingest Direct Transcript Stream', description: 'Acquire raw uncompressed audio segments as immutable ground truth.' },
-          { step: 2, action: 'Compute HMAC-SHA256 Logic Watermark', description: 'Authenticate synthesized logic prior to Brotli compression.' },
-          { step: 3, action: 'Multi-Guard Shell Consensus Audit', description: 'Evaluate Channel Parity H(D(C(Ls))) and Semantic Divergence delta <= 0.05.' }
+          { step: 2, action: 'Sign Transcript And Logic', description: 'Ed25519-sign the SHA-256 hashes of transcript and logic before DEFLATE compression.' },
+          { step: 3, action: 'Run Guard Shell', description: 'Verify signature and decompression, measure lexical grounding, request model review.' }
         ],
-        executableScript: 'console.log("AetherShell Canonical Logic Executing...");\nconst delta = 0.012;\nconsole.log(`Semantic Divergence: ${delta}`);',
+        executableScript: 'ctx.log("Sample script");\nreturn { ok: true };',
         expectedOutputs: { verifiedInvariantsCount: 3, stateMutations: { phaseBoundary: 'PASSED' } },
         criticalGuardRequirements: ['Order 0 Epistemic Subjugation', 'Pre-Compression Signature Binding']
       },
@@ -317,13 +326,13 @@ $$\\text{Action } A \\text{ is Alignment-Valid} \\iff [ H(A) = H(L_s) ] \\land [
           alignmentScore: 98,
           dataDegradationIndex: 0.02,
           boundaryDecision: 'APPROVED',
-          reasoning: 'Sample verified output demonstrating zero data degradation across the phase boundary.',
+          reasoning: 'SAMPLE DATA for trying the import box. Imported reports are display-only and never mark the boundary as passed.',
           invariantAudit: [
             { name: 'Transcript Grounding', status: 'PASS', evidence: 'Ground truth anchors verified' },
             { name: 'Channel Integrity Lemma', status: 'PASS', evidence: 'H(D(C(Ls))) = H(Ls) authenticated' }
           ]
         },
-        passedPhaseBoundary: true
+        passedPhaseBoundary: false
       }
     };
     handlePastedContentChange(JSON.stringify(sample, null, 2));
@@ -518,7 +527,7 @@ $$\\text{Action } A \\text{ is Alignment-Valid} \\iff [ H(A) = H(L_s) ] \\land [
                   <div>
                     <h4 className="font-bold text-slate-200 text-sm">TRII Proof Certificate</h4>
                     <p className="text-[11px] text-slate-400 mt-1 font-sans">
-                      Verifiable audit certificate containing pre-compression HMAC digests and Lyapunov stability evidence.
+                      Guard results with the signed transcript/logic hashes. Not self-authenticating: re-run the guard to verify.
                     </p>
                   </div>
                   <button
@@ -693,7 +702,7 @@ $$\\text{Action } A \\text{ is Alignment-Valid} \\iff [ H(A) = H(L_s) ] \\land [
         <div className="px-6 py-3.5 border-t border-slate-800 bg-slate-950/60 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
           <div className="flex items-center gap-2 text-slate-400">
             <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-            <span>AetherShell Canonical Export Pipeline • SHA-256 HMAC Sealed</span>
+            <span>AetherShell export • signatures verifiable via /api/crypto/public-key</span>
           </div>
 
           <div className="flex items-center gap-2">

@@ -26,7 +26,7 @@ import {
 import {
   fetchCuratedPlaylists,
   fetchPlaylistData,
-  transcribeAudioSegment,
+  fetchVideoCaptions,
   watermarkAndBindCrypto,
   runRclSsiCycle,
   validateWithGuardShell,
@@ -126,7 +126,7 @@ export default function App() {
         }
       } catch (err: any) {
         console.error('Init error:', err);
-        showToast('Initialized offline fallback with curated data', 'info');
+        showToast(`Could not load demo playlists: ${err.message || err}`, 'error');
       }
     };
     init();
@@ -138,10 +138,15 @@ export default function App() {
     try {
       const res = await fetchPlaylistData({ playlistUrl: url });
       setPlaylist(res.playlist);
-      if (res.playlist.videos.length > 0) {
-        setActiveVideo(res.playlist.videos[0]);
+      const firstWithText = res.playlist.videos.find((v) => v.rawTranscript) || res.playlist.videos[0];
+      if (firstWithText) {
+        setActiveVideo(firstWithText);
       }
-      showToast(`Ingested playlist: "${res.playlist.title}"`, 'success');
+      const withText = res.playlist.videos.filter((v) => v.rawTranscript).length;
+      showToast(
+        `Ingested "${res.playlist.title}": captions for ${withText}/${res.playlist.videos.length} video(s)`,
+        withText === res.playlist.videos.length ? 'success' : 'info'
+      );
     } catch (err: any) {
       showToast(err.message || 'Failed to ingest playlist', 'error');
     } finally {
@@ -157,7 +162,7 @@ export default function App() {
       if (res.playlist.videos.length > 0) {
         setActiveVideo(res.playlist.videos[0]);
       }
-      showToast(`Loaded curated playlist: "${res.playlist.title}"`, 'success');
+      showToast(`Loaded demo playlist (synthetic transcripts): "${res.playlist.title}"`, 'info');
     } catch (err: any) {
       showToast(err.message || 'Failed to load curated playlist', 'error');
     } finally {
@@ -169,11 +174,7 @@ export default function App() {
   const handleDeepTranscribe = async (video: VideoNode) => {
     setIsLoading(true);
     try {
-      const res = await transcribeAudioSegment({
-        videoTitle: video.title,
-        audioNotes: video.rawTranscript,
-        existingSegments: video.segments,
-      });
+      const res = await fetchVideoCaptions({ youtubeId: video.youtubeId });
 
       const updatedSegments = res.segments;
       const updatedRaw = updatedSegments
@@ -196,7 +197,7 @@ export default function App() {
         });
       }
 
-      showToast(`Transcribed "${video.title}" with Gemini`, 'success');
+      showToast(`Re-fetched YouTube captions for "${video.title}"`, 'success');
     } catch (err: any) {
       showToast(err.message || 'Transcription failed', 'error');
     } finally {
@@ -675,7 +676,14 @@ export default function App() {
         sessionMemory={sessionMemory}
         onRestoreState={({ innershellLogic: l, guardReport: g, rclAnalysis: r, memoryLattice: m }) => {
           if (l) setInnershellLogic(l);
-          if (g) setGuardReport(g);
+          if (g) {
+            // Imported reports are shown for reference only and never count as a pass.
+            setGuardReport({
+              ...g,
+              passedPhaseBoundary: false,
+              semanticAudit: { ...g.semanticAudit, reasoning: `[IMPORTED, not re-verified] ${g.semanticAudit?.reasoning || ''}` },
+            });
+          }
           if (r) setRclAnalysis(r);
           if (m) {
             setSessionMemory((prev) => ({
@@ -684,9 +692,7 @@ export default function App() {
               memoryLattice: { ...prev.memoryLattice, ...m },
             }));
           }
-          if (g?.semanticAudit?.boundaryDecision === 'APPROVED') {
-            setBoundaryStatus('PASSED');
-          }
+          // Imported reports are display-only; a pass must come from a live guard run.
         }}
         showToast={showToast}
       />

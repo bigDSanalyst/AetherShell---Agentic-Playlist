@@ -80,10 +80,10 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
               </span>
               <div>
                 <h2 className="text-base font-semibold text-slate-100 flex items-center gap-2">
-                  YouTube Playlist Ingestion & Audio Transcription Engine
+                  YouTube Playlist Ingestion (Caption Transcripts)
                 </h2>
                 <p className="text-xs text-slate-400">
-                  Transcribe multi-video YouTube playlists, extract grounded dialogue transcripts, and prepare for RCL/SSI synthesis.
+                  Pull caption transcripts from YouTube videos and playlists (no captions, no transcript; nothing is generated), then prepare them for RCL/SSI synthesis.
                 </p>
               </div>
             </div>
@@ -91,7 +91,9 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
 
           {/* Curated Quick-Load Presets */}
           <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
-            <span className="text-xs font-mono text-cyan-400 font-medium">Curated Presets:</span>
+            <span className="text-xs font-mono text-amber-400 font-medium" title="Demo playlists use synthetic sample transcripts, not real videos">
+              Demo data (synthetic):
+            </span>
             {curatedPlaylists.map((cp) => (
               <button
                 key={cp.id}
@@ -127,12 +129,12 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
             {isLoading ? (
               <>
                 <span className="w-3.5 h-3.5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin"></span>
-                <span>Transcribing...</span>
+                <span>Fetching captions...</span>
               </>
             ) : (
               <>
                 <Sparkles className="w-4 h-4" />
-                <span>Ingest & Transcribe Playlist</span>
+                <span>Ingest Captions</span>
               </>
             )}
           </button>
@@ -144,6 +146,11 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
               <span className="font-semibold text-slate-200">{playlist.title}</span>
               <span className="text-slate-500">•</span>
               <span>{playlist.videos.length} Videos Loaded</span>
+              {playlist.isDemo && (
+                <span className="px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800/60 font-mono text-[10px]">
+                  DEMO · synthetic transcripts
+                </span>
+              )}
             </div>
             <a
               href={playlist.url}
@@ -270,12 +277,12 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => onDeepTranscribe(activeVideo)}
-                      disabled={isLoading}
+                      disabled={isLoading || !!playlist?.isDemo}
                       className="px-3 py-1.5 rounded-lg bg-cyan-950 hover:bg-cyan-900 border border-cyan-700/60 text-cyan-300 text-xs font-mono flex items-center gap-1.5 transition-colors disabled:opacity-50"
-                      title="Re-run deep transcription with timestamps"
+                      title={playlist?.isDemo ? 'Demo videos are not real YouTube videos' : 'Fetch this video\'s caption track from YouTube again'}
                     >
                       <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>Transcribe with Gemini</span>
+                      <span>Re-fetch Captions</span>
                     </button>
 
                     <button
@@ -327,9 +334,11 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
                 ) : (
                   <div className="p-6 text-center rounded-xl bg-slate-950/60 border border-dashed border-slate-800">
                     <AlertCircle className="w-6 h-6 text-amber-400 mx-auto mb-2" />
-                    <p className="text-xs text-slate-300 font-medium">No segments generated yet</p>
+                    <p className="text-xs text-slate-300 font-medium">No transcript for this video</p>
                     <p className="text-[11px] text-slate-500 mt-1">
-                      Click "Transcribe with Gemini" to extract structured speech segments and timestamps.
+                      {activeVideo.transcriptError
+                        ? `YouTube returned no captions: ${activeVideo.transcriptError}`
+                        : 'Click "Re-fetch Captions" to try the YouTube caption track again.'}
                     </p>
                   </div>
                 )}

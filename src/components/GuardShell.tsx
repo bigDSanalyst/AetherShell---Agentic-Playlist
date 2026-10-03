@@ -33,6 +33,7 @@ import {
   DualGuardComparisonReport,
 } from '../types';
 import { importGitHubGuard, executeGitHubGuardAudit } from '../services/api';
+import { runSandboxed } from '../utils/sandbox';
 
 interface GuardShellProps {
   guardReport: GuardAuditReport | null;
@@ -87,7 +88,7 @@ export const GuardShell: React.FC<GuardShellProps> = ({
 
   // Load Sample Template Guard
   const handleLoadSampleGuard = () => {
-    const sampleCode = `// Custom Guard Shell Imported from GitHub (@cyber-guard/transcript-invariants.ts)
+    const sampleCode = `// Built-in sample guard (not fetched from GitHub)
 export interface GuardContext {
   transcript: string;
   logic: any;
@@ -103,9 +104,9 @@ export function validate(ctx: GuardContext): { passed: boolean; violations: stri
     violations.push('Transcript corpus length is insufficient for invariant validation');
   }
 
-  // Rule 2: Watermark Pre-Compression Signature Verification
-  if (!ctx.watermark || !ctx.watermark.signedLogicHash) {
-    violations.push('Pre-compression logic signature hash missing from transcript watermark');
+  // Rule 2: A signed manifest with a bound logic hash must be present
+  if (!ctx.watermark || !ctx.watermark.signature || !ctx.watermark.manifest || !ctx.watermark.manifest.logicSha256) {
+    violations.push('Signed watermark manifest with bound logic is missing');
   }
 
   // Rule 3: Prohibited Semantic Drift Invariant
@@ -120,21 +121,31 @@ export function validate(ctx: GuardContext): { passed: boolean; violations: stri
   };
 }`;
 
+    // Plain-JS translation of sampleCode, run in the browser sandbox.
+    const sampleWrapper = `function runCustomGuard(ctx) {
+  var violations = [];
+  if (!ctx.transcript || ctx.transcript.length < 50) violations.push('Transcript corpus length is insufficient for invariant validation');
+  if (!ctx.watermark || !ctx.watermark.signature || !ctx.watermark.manifest || !ctx.watermark.manifest.logicSha256) violations.push('Signed watermark manifest with bound logic is missing');
+  if (ctx.logic && ctx.logic.summary && String(ctx.logic.summary).toLowerCase().indexOf('hallucination') !== -1) violations.push('Prohibited ungrounded semantic tokens detected');
+  return { passed: violations.length === 0, violations: violations, score: violations.length === 0 ? 100 : Math.max(0, 100 - violations.length * 30) };
+}`;
+
     setCustomGitHubGuard({
-      id: `gh-guard-${Date.now().toString(36)}`,
-      repoUrl: 'https://github.com/aethershell/guard-invariants/blob/main/transcript-guard.ts',
-      repoName: 'aethershell/guard-invariants',
-      filePath: 'transcript-guard.ts',
-      branch: 'main',
+      id: `sample-guard-${Date.now().toString(36)}`,
+      repoUrl: 'Built-in sample',
+      repoName: 'built-in sample',
+      filePath: 'sample-guard.ts',
+      branch: '-',
       code: sampleCode,
-      name: 'GitHub Transcript Grounding & Signature Guard',
-      version: '2.1.0',
-      description: 'Audits transcript ground truth, cryptographic pre-compression signatures, and semantic drift bounds.',
+      name: 'Sample Transcript & Signature Guard',
+      version: 'sample',
+      description: 'Built-in example guard: checks transcript length, presence of a signed manifest, and a banned word.',
       ruleList: [
-        'Transcript corpus length must satisfy minimal epistemic density',
-        'Pre-compression logic signature hash must exist inside watermark',
-        'Ungrounded drift tokens and semantic hallucinations are prohibited',
+        'Transcript must be at least 50 characters',
+        'Watermark must carry a signed manifest with a bound logic hash',
+        'Logic summary must not contain the word "hallucination"',
       ],
+      executableSandboxWrapper: sampleWrapper,
       importedAt: Date.now(),
     });
   };
@@ -168,6 +179,29 @@ export function validate(ctx: GuardContext): { passed: boolean; violations: stri
 
     setIsExecutingCustomGuard(true);
     try {
+      // 1. Run the guard's JS wrapper (if any) in the isolated sandbox.
+      let sandboxResult: GitHubGuardAuditResult['sandboxResult'];
+      if (customGitHubGuard.executableSandboxWrapper) {
+        const run = await runSandboxed(
+          customGitHubGuard.executableSandboxWrapper,
+          {
+            transcript: activeVideo.rawTranscript,
+            logic: innershellLogic,
+            watermark: activeVideo.watermark ? { ...activeVideo.watermark, watermarkedText: undefined } : null,
+          },
+          { mode: 'guard' }
+        );
+        const r = run.result || {};
+        sandboxResult = {
+          ok: run.ok,
+          passed: run.ok && r.passed === true,
+          score: Number(r.score) || 0,
+          violations: Array.isArray(r.violations) ? r.violations.map(String) : run.error ? [run.error] : [],
+          error: run.error,
+        };
+      }
+
+      // 2. LLM review against the guard's source (fails closed server-side).
       const res = await executeGitHubGuardAudit({
         guard: customGitHubGuard,
         directTranscript: activeVideo.rawTranscript,
@@ -175,7 +209,23 @@ export function validate(ctx: GuardContext): { passed: boolean; violations: stri
         innershellLogic,
       });
 
-      setCustomGuardAuditResult(res.auditResult);
+      // Approval needs both: the sandboxed code (when present) and the review.
+      const review = res.auditResult;
+      const passed = review.passed === true && (sandboxResult ? sandboxResult.passed : true);
+      setCustomGuardAuditResult({
+        ...review,
+        passed,
+        decision: passed ? review.decision : review.decision === 'APPROVED' ? 'QUARANTINED' : review.decision,
+        violations: [...(sandboxResult?.violations.map((v) => `[sandbox] ${v}`) || []), ...(review.violations || [])],
+        auditLog: [
+          ...(sandboxResult
+            ? [`[SANDBOX] guard code ${sandboxResult.ok ? 'ran' : 'failed'}: passed=${sandboxResult.passed}, score=${sandboxResult.score}`]
+            : ['[SANDBOX] no executable wrapper; LLM review only']),
+          ...(review.auditLog || []),
+        ],
+        evaluationMethod: sandboxResult ? 'sandbox' : 'llm-review',
+        sandboxResult,
+      });
     } catch (err: any) {
       alert(`Custom Guard Audit Failed: ${err.message}`);
     } finally {
@@ -332,7 +382,7 @@ export function validate(ctx: GuardContext): { passed: boolean; violations: stri
         )}
       </div>
 
-      {/* Concurrent Layered Verification • Dual Guard Shell Cross-Comparison (Alpha vs. Beta) */}
+      {/* Dual Guard Comparison (Alpha: word overlap, Beta: word-pair overlap) — measured values only */}
       <div className="rounded-2xl border border-cyan-700/50 bg-gradient-to-br from-slate-900 via-cyan-950/20 to-slate-900 p-5 shadow-xl shadow-cyan-950/20 backdrop-blur-sm space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-cyan-900/60">
           <div className="flex items-center gap-2.5">
@@ -341,270 +391,105 @@ export function validate(ctx: GuardContext): { passed: boolean; violations: stri
             </span>
             <div>
               <h3 className="text-xs font-mono uppercase tracking-wider text-slate-100 font-bold flex items-center gap-2">
-                Concurrent Layered Verification • Dual Guard Cross-Comparison
+                Dual Guard Comparison
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/60">
-                  Alpha vs. Beta Evaluators
+                  Alpha vs. Beta
                 </span>
               </h3>
               <p className="text-xs text-slate-400">
-                Cross-compares semantic divergence thresholds between two distinct agentic evaluators to prevent blind spots and satisfy layered verification.
+                Both guards verify the Ed25519 signature and decompression, then measure lexical grounding (Alpha: words, Beta: word pairs) and ask the model for a review. Any failed check closes the boundary.
               </p>
             </div>
           </div>
-
-          {/* Consensus Pill */}
-          <div className="flex items-center gap-2 font-mono text-xs">
-            <span className="text-slate-400 text-[11px]">Inter-Evaluator Gap:</span>
-            <span className="px-2.5 py-1 rounded-lg bg-slate-950 border border-cyan-800/60 text-cyan-300 font-bold">
-              |δ_α - δ_β| = {dualComparisonReport?.divergenceDiscrepancy ?? Number(Math.abs((guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.semanticDistanceDelta ?? 0.012) - (guardReportBeta?.multiGuardTelemetry?.guard2SemanticAuditor?.semanticDistanceDelta ?? 0.015)).toFixed(4))}
-            </span>
-            <span
-              className={`px-3 py-1 rounded-lg font-bold text-[10px] uppercase ${
-                (guardReport?.semanticAudit.boundaryDecision === 'APPROVED' && (!guardReportBeta || guardReportBeta.semanticAudit.boundaryDecision === 'APPROVED'))
-                  ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/60'
-                  : 'bg-rose-950 text-rose-300 border border-rose-700/60'
-              }`}
-            >
-              {(guardReport?.semanticAudit.boundaryDecision === 'APPROVED' && (!guardReportBeta || guardReportBeta.semanticAudit.boundaryDecision === 'APPROVED'))
-                ? 'UNANIMOUS CONSENSUS'
-                : 'DIVERGENCE CONFLICT'}
-            </span>
-          </div>
+          <span
+            className={`px-3 py-1 rounded-lg font-mono font-bold text-[10px] uppercase ${
+              !guardReport && !guardReportBeta
+                ? 'bg-slate-900 text-slate-400 border border-slate-800'
+                : guardReport?.passedPhaseBoundary && guardReportBeta?.passedPhaseBoundary
+                ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/60'
+                : 'bg-rose-950 text-rose-300 border border-rose-700/60'
+            }`}
+          >
+            {!guardReport && !guardReportBeta
+              ? 'NOT RUN'
+              : guardReport?.passedPhaseBoundary && guardReportBeta?.passedPhaseBoundary
+              ? 'BOTH PASSED'
+              : !guardReport || !guardReportBeta
+              ? 'ONE GUARD NOT RUN'
+              : 'BOUNDARY CLOSED'}
+          </span>
         </div>
 
-        {/* Semantic Divergence Threshold Meter (delta_alpha vs delta_beta vs epsilon) */}
-        <div className="p-4 rounded-xl bg-slate-950/90 border border-cyan-800/40 space-y-3 font-mono text-xs">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-2">
-            <span className="text-slate-300 font-semibold flex items-center gap-2">
-              <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-              Semantic Divergence Threshold Cross-Comparison Spectrum:
-            </span>
-            <div className="flex items-center gap-3 text-[11px]">
-              <span className="text-cyan-400">● Guard Alpha (δ_α)</span>
-              <span className="text-purple-400">▲ Guard Beta (δ_β)</span>
-              <span className="text-rose-400 font-bold">| Tolerance Limit (ε = 0.050)</span>
-            </div>
-          </div>
-
-          {/* Visual Spectrum Bar */}
-          <div className="relative pt-6 pb-2">
-            {/* Background Track */}
-            <div className="w-full h-3 bg-gradient-to-r from-emerald-500/30 via-cyan-500/30 via-amber-500/30 to-rose-500/40 rounded-full relative overflow-hidden border border-slate-800">
-              {/* Safe Zone Highlight */}
-              <div className="absolute left-0 top-0 bottom-0 bg-emerald-500/20" style={{ width: '50%' }}></div>
-            </div>
-
-            {/* Threshold Line at epsilon = 0.05 (middle of 0.0 to 0.10) */}
-            <div className="absolute top-2 bottom-0 left-1/2 -translate-x-1/2 flex flex-col items-center pointer-events-none">
-              <span className="text-[9px] text-rose-400 font-bold -mt-3.5">ε = 0.050</span>
-              <div className="w-0.5 h-full bg-rose-500 shadow-sm shadow-rose-500"></div>
-            </div>
-
-            {/* Pointer for Guard Alpha (e.g. 0.012 -> 12% across 0.10 scale) */}
-            {(() => {
-              const dAlpha = guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.semanticDistanceDelta ?? 0.012;
-              const posPercent = Math.min(100, Math.max(2, (dAlpha / 0.10) * 100));
-              return (
-                <div
-                  className="absolute top-1 flex flex-col items-center transition-all duration-300"
-                  style={{ left: `${posPercent}%` }}
-                >
-                  <span className="text-[9px] text-cyan-300 font-bold bg-slate-950 px-1 rounded border border-cyan-700/60 -mt-3.5">
-                    δ_α: {dAlpha}
-                  </span>
-                  <div className="w-3 h-3 rounded-full bg-cyan-400 border-2 border-slate-950 shadow-md shadow-cyan-400/50 mt-1"></div>
-                </div>
-              );
-            })()}
-
-            {/* Pointer for Guard Beta (e.g. 0.015 -> 15% across 0.10 scale) */}
-            {(() => {
-              const dBeta = guardReportBeta?.multiGuardTelemetry?.guard2SemanticAuditor?.semanticDistanceDelta ?? (dualComparisonReport?.deltaBeta ?? 0.015);
-              const posPercent = Math.min(100, Math.max(5, (dBeta / 0.10) * 100));
-              return (
-                <div
-                  className="absolute top-1 flex flex-col items-center transition-all duration-300"
-                  style={{ left: `${posPercent}%` }}
-                >
-                  <span className="text-[9px] text-purple-300 font-bold bg-slate-950 px-1 rounded border border-purple-700/60 -mt-3.5">
-                    δ_β: {dBeta}
-                  </span>
-                  <div className="w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-t-[8px] border-t-purple-400 mt-1"></div>
-                </div>
-              );
-            })()}
-          </div>
-
-          <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1">
-            <span>0.000 (Zero Drift)</span>
-            <span>0.025 (Optimal Convergence)</span>
-            <span className="text-rose-400 font-bold">0.050 (Tolerance Ceiling)</span>
-            <span>0.075 (Severe Drift)</span>
-            <span>0.100 (Uncontrolled Divergence)</span>
-          </div>
-        </div>
-
-        {/* Side-by-Side Evaluator Cards (Alpha vs. Beta) */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 font-mono text-xs">
-          {/* Evaluator 1: Guard Shell Alpha (Canonical Sentinel) */}
-          <div className="p-4 rounded-xl bg-slate-950/80 border border-cyan-800/40 space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-              <div className="flex items-center gap-2">
-                <span className="p-1.5 rounded-lg bg-cyan-950 text-cyan-300 border border-cyan-800/60">
-                  <ShieldCheck className="w-4 h-4" />
-                </span>
-                <div>
-                  <h4 className="font-bold text-slate-200 text-xs">Guard Shell Alpha</h4>
-                  <span className="text-[10px] text-slate-400 font-sans">Primary Canonical Sentinel</span>
-                </div>
-              </div>
-
-              <span
-                className={`px-2.5 py-0.5 rounded text-[10px] font-bold uppercase ${
-                  guardReport?.semanticAudit.boundaryDecision === 'APPROVED'
-                    ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/60'
-                    : 'bg-rose-950 text-rose-300 border border-rose-700/60'
-                }`}
-              >
-                {guardReport?.semanticAudit.boundaryDecision || 'APPROVED'}
-              </span>
-            </div>
-
-            <div className="grid grid-cols-3 gap-2 text-[10px]">
-              <div className="p-2 rounded bg-slate-900 border border-slate-800">
-                <span className="text-slate-500 block">Divergence δ_α:</span>
-                <strong className="text-cyan-400 text-xs">
-                  {guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.semanticDistanceDelta ?? 0.012}
-                </strong>
-              </div>
-              <div className="p-2 rounded bg-slate-900 border border-slate-800">
-                <span className="text-slate-500 block">Alignment Score:</span>
-                <strong className="text-emerald-400 text-xs">
-                  {guardReport?.semanticAudit.alignmentScore ?? 98}%
-                </strong>
-              </div>
-              <div className="p-2 rounded bg-slate-900 border border-slate-800">
-                <span className="text-slate-500 block">Channel Parity:</span>
-                <strong className="text-purple-300 text-xs">
-                  {guardReport?.watermarkSignatureStatus === 'VERIFIED' ? 'PASS' : 'WARN'}
-                </strong>
-              </div>
-            </div>
-
-            <p className="text-[11px] text-slate-400 font-sans leading-relaxed">
-              {guardReport?.semanticAudit.reasoning ||
-                'Canonical invariant verification confirms direct transcript ground-truth binding and zero data degradation across the phase membrane.'}
-            </p>
-
-            {/* Checklist */}
-            <div className="space-y-1 text-[10px] pt-1 border-t border-slate-900">
-              <div className="flex items-center gap-1.5 text-emerald-400">
-                <CheckCircle2 className="w-3 h-3 shrink-0" />
-                <span>Order 0 Epistemic Subjugation Verified</span>
-              </div>
-              <div className="flex items-center gap-1.5 text-emerald-400">
-                <CheckCircle2 className="w-3 h-3 shrink-0" />
-                <span>Lyapunov Residual V(x) ≤ 0.050 Bound Satisfied</span>
-              </div>
-              <div className="flex items-center gap-1.5 text-emerald-400">
-                <CheckCircle2 className="w-3 h-3 shrink-0" />
-                <span>Pre-Compression HMAC Signature Binding Intact</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Evaluator 2: Guard Shell Beta (Independent Adversarial Cross-Examiner) */}
-          <div className="p-4 rounded-xl bg-slate-950/80 border border-indigo-800/40 space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-              <div className="flex items-center gap-2">
-                <span className="p-1.5 rounded-lg bg-indigo-950 text-indigo-300 border border-indigo-800/60">
-                  <ShieldAlert className="w-4 h-4" />
-                </span>
-                <div>
-                  <h4 className="font-bold text-slate-200 text-xs">Guard Shell Beta</h4>
-                  <span className="text-[10px] text-indigo-300 font-sans">
-                    Independent Adversarial Cross-Examiner ({selectedStrictness})
+          {([
+            { label: 'Guard Alpha', unit: 'content words', report: guardReport, accent: 'cyan' },
+            { label: `Guard Beta (${selectedStrictness})`, unit: 'word pairs', report: guardReportBeta, accent: 'indigo' },
+          ] as const).map(({ label, unit, report }) => {
+            const g2 = report?.multiGuardTelemetry?.guard2SemanticAuditor;
+            return (
+              <div key={label} className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <h4 className="font-bold text-slate-200 text-xs">{label}</h4>
+                  <span
+                    className={`px-2.5 py-0.5 rounded text-[10px] font-bold uppercase ${
+                      !report
+                        ? 'bg-slate-900 text-slate-400 border border-slate-800'
+                        : report.passedPhaseBoundary
+                        ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/60'
+                        : 'bg-rose-950 text-rose-300 border border-rose-700/60'
+                    }`}
+                  >
+                    {!report ? 'NOT RUN' : report.passedPhaseBoundary ? 'PASSED' : 'FAILED'}
                   </span>
                 </div>
+                {report ? (
+                  <>
+                    <div className="grid grid-cols-3 gap-2 text-[10px]">
+                      <div className="p-2 rounded bg-slate-900 border border-slate-800">
+                        <span className="text-slate-500 block">Grounded {unit}:</span>
+                        <strong className="text-cyan-400 text-xs">{g2 ? `${g2.citationCoveragePercent}%` : 'n/a'}</strong>
+                        {g2 && <span className="text-slate-500 block">need ≥ {Math.round((1 - g2.epsilonThreshold) * 100)}%</span>}
+                      </div>
+                      <div className="p-2 rounded bg-slate-900 border border-slate-800">
+                        <span className="text-slate-500 block">Model score:</span>
+                        <strong className="text-emerald-400 text-xs">
+                          {report.llmAvailable === false ? 'unavailable' : `${report.semanticAudit.alignmentScore}%`}
+                        </strong>
+                      </div>
+                      <div className="p-2 rounded bg-slate-900 border border-slate-800">
+                        <span className="text-slate-500 block">Signature:</span>
+                        <strong className={report.watermarkSignatureStatus === 'VERIFIED' ? 'text-emerald-400 text-xs' : 'text-rose-400 text-xs'}>
+                          {report.watermarkSignatureStatus}
+                        </strong>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-slate-400 font-sans leading-relaxed">{report.semanticAudit.reasoning}</p>
+                    {(report.provenanceFailures?.length ?? 0) > 0 && (
+                      <ul className="text-[10px] text-rose-300 list-disc pl-4 space-y-0.5">
+                        {report.provenanceFailures!.map((f) => (
+                          <li key={f}>{f}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-[11px] text-slate-500 font-sans">Run this guard to see its measurements.</p>
+                )}
               </div>
-
-              <span
-                className={`px-2.5 py-0.5 rounded text-[10px] font-bold uppercase ${
-                  (guardReportBeta?.semanticAudit.boundaryDecision ?? 'APPROVED') === 'APPROVED'
-                    ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/60'
-                    : 'bg-rose-950 text-rose-300 border border-rose-700/60'
-                }`}
-              >
-                {guardReportBeta?.semanticAudit.boundaryDecision || (guardReport ? 'APPROVED' : 'READY')}
-              </span>
-            </div>
-
-            <div className="grid grid-cols-3 gap-2 text-[10px]">
-              <div className="p-2 rounded bg-slate-900 border border-slate-800">
-                <span className="text-slate-500 block">Divergence δ_β:</span>
-                <strong className="text-purple-300 text-xs">
-                  {guardReportBeta?.multiGuardTelemetry?.guard2SemanticAuditor?.semanticDistanceDelta ?? (dualComparisonReport?.deltaBeta ?? 0.015)}
-                </strong>
-              </div>
-              <div className="p-2 rounded bg-slate-900 border border-slate-800">
-                <span className="text-slate-500 block">Alignment Score:</span>
-                <strong className="text-emerald-400 text-xs">
-                  {guardReportBeta?.semanticAudit.alignmentScore ?? 94}%
-                </strong>
-              </div>
-              <div className="p-2 rounded bg-slate-900 border border-slate-800">
-                <span className="text-slate-500 block">Phrase Topology:</span>
-                <strong className="text-indigo-300 text-xs">
-                  {guardReportBeta ? 'VERIFIED' : 'READY'}
-                </strong>
-              </div>
-            </div>
-
-            <p className="text-[11px] text-slate-400 font-sans leading-relaxed">
-              {guardReportBeta?.semanticAudit.reasoning ||
-                'Independent adversarial cross-examination verifies no subtle terminology distortion, phrase-topology leakage, or dropped negative speaker constraints.'}
-            </p>
-
-            {/* Checklist */}
-            <div className="space-y-1 text-[10px] pt-1 border-t border-slate-900">
-              <div className="flex items-center gap-1.5 text-emerald-400">
-                <CheckCircle2 className="w-3 h-3 shrink-0" />
-                <span>Adversarial Semantic Divergence δ_β ≤ 0.050</span>
-              </div>
-              <div className="flex items-center gap-1.5 text-emerald-400">
-                <CheckCircle2 className="w-3 h-3 shrink-0" />
-                <span>Negative Constraint Enforcement Intact</span>
-              </div>
-              <div className="flex items-center gap-1.5 text-emerald-400">
-                <CheckCircle2 className="w-3 h-3 shrink-0" />
-                <span>Phrase Topology Set Overlap Confirmed</span>
-              </div>
-            </div>
-          </div>
+            );
+          })}
         </div>
 
-        {/* Dual Guard Quorum Consensus Banner */}
-        <div
-          className={`p-3.5 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-mono ${
-            (guardReport?.semanticAudit.boundaryDecision === 'APPROVED' && (!guardReportBeta || guardReportBeta.semanticAudit.boundaryDecision === 'APPROVED'))
-              ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
-              : 'bg-rose-950/40 border-rose-500/40 text-rose-300'
-          }`}
-        >
-          <div className="flex items-center gap-2.5">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span className="leading-relaxed">
-              <strong>Layered Verification Quorum:</strong> Both independent Guard Shells verified zero synthesis drift below ε = 0.050. Inter-evaluator divergence gap is tightly bounded (|δ_α - δ_β| ≤ 0.020).
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            <span className="text-[10px] px-2.5 py-1 rounded bg-slate-900 border border-slate-800 text-slate-300">
-              2 of 2 Evaluators Passed
-            </span>
-          </div>
-        </div>
+        {dualComparisonReport && (
+          <ul className="p-3.5 rounded-xl border border-slate-800 bg-slate-950/60 text-[11px] font-mono text-slate-300 space-y-1">
+            {dualComparisonReport.comparativeObservations.map((o) => (
+              <li key={o}>• {o}</li>
+            ))}
+          </ul>
+        )}
       </div>
+
+      {/* Check breakdown for the most recent Alpha run */}
       <div className="rounded-2xl border border-indigo-700/50 bg-gradient-to-br from-slate-900 via-indigo-950/30 to-slate-900 p-5 shadow-xl shadow-indigo-950/20 backdrop-blur-sm space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-indigo-900/60">
           <div className="flex items-center gap-2.5">
@@ -612,170 +497,68 @@ export function validate(ctx: GuardContext): { passed: boolean; violations: stri
               <Layers className="w-4 h-4" />
             </span>
             <div>
-              <h3 className="text-xs font-mono uppercase tracking-wider text-slate-100 font-bold flex items-center gap-2">
-                Multi-Guard Shell Defense Array (3+1 Layered Verification)
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/60">
-                  Consensus Quorum
-                </span>
-              </h3>
+              <h3 className="text-xs font-mono uppercase tracking-wider text-slate-100 font-bold">Guard Checks</h3>
               <p className="text-xs text-slate-400">
-                A single guard shell is insufficient for alignment. Verification is partitioned into channel integrity, semantic anti-drift, and formal Hoare safety.
+                Pass requires all three: (1) signature and hashes verify and decompression is byte-identical, (2) lexical grounding meets the threshold, (3) the model review approves. The imported guard, if any, is reported separately.
               </p>
             </div>
           </div>
+          <span className="px-3 py-1.5 rounded-lg bg-slate-950 border border-indigo-800/60 text-slate-300 font-mono text-xs">
+            Failure mode:{' '}
+            <strong className="text-cyan-400">
+              {guardReport?.multiGuardTelemetry?.triiVerificationCondition?.failureModeClassification ?? 'NOT RUN'}
+            </strong>
+          </span>
+        </div>
 
-          {/* TRII Alignment Theorem Status Pill */}
-          <div className="flex items-center gap-2 font-mono text-xs">
-            <div className="px-3 py-1.5 rounded-lg bg-slate-950 border border-indigo-800/60 text-slate-300 flex items-center gap-2">
-              <span className="text-indigo-400 font-semibold">TRII Criterion:</span>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 font-mono text-xs">
+          {[
+            guardReport?.multiGuardTelemetry?.guard1ChannelSentinel,
+            guardReport?.multiGuardTelemetry?.guard2SemanticAuditor,
+            guardReport?.multiGuardTelemetry?.guard3FormalOracle,
+          ].map((g, i) => (
+            <div key={i} className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-300 font-bold text-[11px]">
+                  {g?.name ?? ['Check 1: Signature & decompression', 'Check 2: Lexical grounding', 'Check 3: LLM review'][i]}
+                </span>
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold shrink-0 ${
+                    !g
+                      ? 'bg-slate-900 text-slate-400 border border-slate-800'
+                      : g.status === 'PASS'
+                      ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/60'
+                      : 'bg-rose-950 text-rose-300 border border-rose-700/60'
+                  }`}
+                >
+                  {g?.status ?? 'NOT RUN'}
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-400 break-words">{g?.evidence ?? 'Run the Guard Shell to evaluate.'}</p>
+            </div>
+          ))}
+
+          <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-slate-300 font-bold text-[11px]">Imported guard</span>
               <span
-                className={`font-bold px-2 py-0.5 rounded text-[10px] ${
-                  guardReport?.multiGuardTelemetry?.triiVerificationCondition?.isAlignmentValid ?? true
+                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                  !customGuardAuditResult
+                    ? 'bg-slate-900 text-slate-400 border border-slate-800'
+                    : customGuardAuditResult.passed
                     ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/60'
                     : 'bg-rose-950 text-rose-300 border border-rose-700/60'
                 }`}
               >
-                {guardReport?.multiGuardTelemetry?.triiVerificationCondition?.isAlignmentValid ?? true
-                  ? 'ALIGNMENT-VALID'
-                  : 'QUARANTINED'}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Formal Mathematical Verification Condition Box */}
-        <div className="p-4 rounded-xl bg-slate-950/90 border border-indigo-800/40 space-y-3 font-mono text-xs">
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2 border-b border-slate-800 pb-2">
-            <span className="text-slate-300 font-semibold flex items-center gap-2">
-              <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-              Two-Stage Alignment Criterion (Peer-Reviewed TRII Formulation):
-            </span>
-            <div className="flex items-center gap-3 text-[11px]">
-              <span className="text-slate-400">
-                Failure Mode:{' '}
-                <strong className="text-cyan-400">
-                  {guardReport?.multiGuardTelemetry?.triiVerificationCondition?.failureModeClassification || 'NONE (Aligned)'}
-                </strong>
-              </span>
-            </div>
-          </div>
-
-          <div className="p-3 rounded-lg bg-indigo-950/30 border border-indigo-900/60 text-indigo-200 text-center font-serif text-sm italic">
-            Action A is Alignment-Valid ⟺ [ H(A) = H(L_s) ] ∧ [ δ(A, T) ≤ ε ]
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px]">
-            <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400 font-bold">Stage 1: Channel Integrity Lemma</span>
-                <span className="text-emerald-400 font-bold">H(D(C(L_s))) = H(L_s)</span>
-              </div>
-              <p className="text-slate-400 text-[10px]">
-                Detects channel drift, transmission tampering, or lossy decompression. Proven under collision-resistant HMAC assumptions.
-              </p>
-            </div>
-
-            <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-400 font-bold">Stage 2: Semantic Distance Bound</span>
-                <span className="text-cyan-400 font-bold">δ(L_s, T) ≤ 0.05 (ε)</span>
-              </div>
-              <p className="text-slate-400 text-[10px]">
-                Detects synthesis drift where generated logic hallucinates or diverges from raw uncompressed transcript ground truth.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* 3+1 Multi-Guard Shell Defense Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 font-mono text-xs">
-          {/* Guard 1: Channel Sentinel */}
-          <div className="p-3.5 rounded-xl bg-slate-950/80 border border-cyan-800/40 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-slate-300 font-bold text-[11px] truncate">
-                Guard 1: Channel Sentinel
-              </span>
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">
-                {guardReport?.multiGuardTelemetry?.guard1ChannelSentinel?.status || 'PASS'}
-              </span>
-            </div>
-            <p className="text-[10px] text-slate-400">
-              {guardReport?.multiGuardTelemetry?.guard1ChannelSentinel?.evidence ||
-                'Proves H(D(C(L_s))) = H(L_s) authenticated via pre-compression HMAC seal.'}
-            </p>
-            <div className="pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[10px]">
-              <span className="text-slate-500">Channel Drift:</span>
-              <span className="text-emerald-400 font-bold">0.00% (Zero Tampering)</span>
-            </div>
-          </div>
-
-          {/* Guard 2: Semantic Anti-Drift Auditor */}
-          <div className="p-3.5 rounded-xl bg-slate-950/80 border border-indigo-800/40 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-slate-300 font-bold text-[11px] truncate">
-                Guard 2: Semantic Auditor
-              </span>
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">
-                {guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.status || 'PASS'}
-              </span>
-            </div>
-            <p className="text-[10px] text-slate-400">
-              {guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.evidence ||
-                'Synthesis Drift bounded: δ(L_s, T) = 0.012 ≤ ε (0.05). Grounded in transcript corpus.'}
-            </p>
-            <div className="pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[10px]">
-              <span className="text-slate-500">Semantic δ:</span>
-              <span className="text-cyan-400 font-bold">
-                {guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.semanticDistanceDelta || '0.012'} / 0.050
-              </span>
-            </div>
-          </div>
-
-          {/* Guard 3: Formal Hoare-Safety Oracle */}
-          <div className="p-3.5 rounded-xl bg-slate-950/80 border border-purple-800/40 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-slate-300 font-bold text-[11px] truncate">
-                Guard 3: Hoare Oracle
-              </span>
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60">
-                {guardReport?.multiGuardTelemetry?.guard3FormalOracle?.status || 'PASS'}
-              </span>
-            </div>
-            <p className="text-[10px] text-slate-400">
-              {guardReport?.multiGuardTelemetry?.guard3FormalOracle?.evidence ||
-                'Lyapunov energy residual V(x) = 0.012 ≤ 0.05. Hoare triples {P}C{Q} verified.'}
-            </p>
-            <div className="pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[10px]">
-              <span className="text-slate-500">Hoare Triples:</span>
-              <span className="text-purple-300 font-bold">5 Orders (R⁰-R⁴)</span>
-            </div>
-          </div>
-
-          {/* Guard 4: External Custom GitHub Guard */}
-          <div className="p-3.5 rounded-xl bg-slate-950/80 border border-emerald-800/40 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-slate-300 font-bold text-[11px] truncate">
-                Guard 4: GitHub Guard
-              </span>
-              <span
-                className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                  customGitHubGuard
-                    ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/60'
-                    : 'bg-slate-900 text-slate-400 border border-slate-800'
-                }`}
-              >
-                {customGitHubGuard ? 'ACTIVE' : 'READY'}
+                {!customGitHubGuard ? 'NONE' : !customGuardAuditResult ? 'NOT RUN' : customGuardAuditResult.passed ? 'PASS' : 'FAIL'}
               </span>
             </div>
             <p className="text-[10px] text-slate-400 truncate">
-              {customGitHubGuard ? customGitHubGuard.name : 'Import custom repository guardrails below.'}
+              {customGitHubGuard ? customGitHubGuard.name : 'Import a guard below.'}
             </p>
-            <div className="pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[10px]">
-              <span className="text-slate-500">Custom Rules:</span>
-              <span className="text-emerald-400 font-bold">
-                {customGitHubGuard?.ruleList?.length || 0} active
-              </span>
-            </div>
+            <p className="text-[10px] text-slate-500">
+              {customGitHubGuard ? `${customGitHubGuard.ruleList?.length || 0} rule(s) listed` : ''}
+            </p>
           </div>
         </div>
       </div>
@@ -1071,7 +854,7 @@ export function validate(ctx: GuardContext): { passed: boolean; violations: stri
                 </span>
                 <div className="text-[10px] font-mono text-slate-400 space-y-1">
                   <div className="truncate">
-                    HMAC Hash: <code className="text-cyan-400">{activeVideo?.watermark?.transcriptHash || 'N/A'}</code>
+                    Transcript SHA-256: <code className="text-cyan-400">{activeVideo?.watermark?.transcriptHash || 'N/A'}</code>
                   </div>
                   <div className="truncate">
                     Logic Sig: <code className="text-emerald-400">{activeVideo?.watermark?.signedLogicHash || 'N/A'}</code>
@@ -1139,9 +922,7 @@ export function validate(ctx: GuardContext): { passed: boolean; violations: stri
                       {(guardReport.semanticAudit.dataDegradationIndex * 100).toFixed(1)}%
                     </div>
                     <span className="text-[10px] text-slate-500 font-mono">
-                      {guardReport.semanticAudit.dataDegradationIndex <= 0.05
-                        ? 'Zero Semantic Drift'
-                        : 'Moderate Drift'}
+                      {guardReport.llmAvailable === false ? 'Model review unavailable' : 'Model-estimated (not measured)'}
                     </span>
                   </div>
                 </div>
