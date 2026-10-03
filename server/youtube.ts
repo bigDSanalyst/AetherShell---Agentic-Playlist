@@ -23,6 +23,7 @@ export interface IngestedVideo {
   transcriptSource: 'youtube-captions' | 'unavailable';
   transcriptLanguage?: string;
   transcriptError?: string;
+  uploadDate?: string; // ISO 8601, only when the YouTube Data API provided it
 }
 
 export type ParsedYouTubeUrl = { kind: 'video'; videoId: string } | { kind: 'playlist'; playlistId: string };
@@ -155,7 +156,8 @@ export async function fetchVideoTranscript(
 export interface PlaylistListing {
   title: string;
   description: string;
-  items: { videoId: string; title: string; channel: string }[];
+  items: { videoId: string; title: string; channel: string; uploadDate?: string; duration?: string }[];
+  source: 'youtube-data-api' | 'youtube-page';
 }
 
 export async function fetchPlaylistListing(playlistId: string, maxVideos: number, apiKey: string): Promise<PlaylistListing> {
@@ -171,7 +173,7 @@ export async function fetchPlaylistListing(playlistId: string, maxVideos: number
   while (items.length < maxVideos) {
     const pageSize = Math.min(50, maxVideos - items.length);
     const res = await fetch(
-      `${api}/playlistItems?part=snippet&maxResults=${pageSize}&playlistId=${encodeURIComponent(playlistId)}` +
+      `${api}/playlistItems?part=snippet,contentDetails&maxResults=${pageSize}&playlistId=${encodeURIComponent(playlistId)}` +
         `&key=${encodeURIComponent(apiKey)}${pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : ''}`
     );
     if (!res.ok) throw new Error(`YouTube Data API returned HTTP ${res.status} for playlist items`);
@@ -179,13 +181,106 @@ export async function fetchPlaylistListing(playlistId: string, maxVideos: number
     for (const it of page.items || []) {
       const vid = it.snippet?.resourceId?.videoId;
       if (vid && VIDEO_ID_RE.test(vid)) {
-        items.push({ videoId: vid, title: it.snippet.title || vid, channel: it.snippet.videoOwnerChannelTitle || '' });
+        items.push({
+          videoId: vid,
+          title: it.snippet.title || vid,
+          channel: it.snippet.videoOwnerChannelTitle || '',
+          uploadDate: it.contentDetails?.videoPublishedAt || undefined,
+        });
       }
     }
     if (!page.nextPageToken) break;
     pageToken = page.nextPageToken;
   }
-  return { title: snippet.title || playlistId, description: snippet.description || '', items };
+  return { title: snippet.title || playlistId, description: snippet.description || '', items, source: 'youtube-data-api' };
+}
+
+// ISO 8601 duration (PT1H2M3S) -> seconds.
+export function parseIsoDuration(iso: string): number | null {
+  const m = /^P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(iso || '');
+  if (!m) return null;
+  const [, d, h, mi, s] = m.map((x) => Number(x || 0));
+  return d * 86400 + h * 3600 + mi * 60 + s;
+}
+
+// Upload date and duration for up to 50 ids per request (YouTube Data API).
+export async function fetchVideoDetails(
+  videoIds: string[],
+  apiKey: string
+): Promise<Record<string, { uploadDate?: string; duration?: string; title?: string; channel?: string }>> {
+  const out: Record<string, { uploadDate?: string; duration?: string; title?: string; channel?: string }> = {};
+  const ids = videoIds.filter((id) => VIDEO_ID_RE.test(id));
+  for (let i = 0; i < ids.length; i += 50) {
+    const batch = ids.slice(i, i + 50);
+    const res = await fetch(
+      `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${batch.join(',')}&key=${encodeURIComponent(apiKey)}`
+    );
+    if (!res.ok) throw new Error(`YouTube Data API returned HTTP ${res.status} for video details`);
+    const data: any = await res.json();
+    for (const it of data.items || []) {
+      const secs = parseIsoDuration(it.contentDetails?.duration);
+      out[it.id] = {
+        uploadDate: it.snippet?.publishedAt || undefined,
+        duration: secs !== null ? formatTimestamp(secs) : undefined,
+        title: it.snippet?.title,
+        channel: it.snippet?.channelTitle,
+      };
+    }
+  }
+  return out;
+}
+
+// Fallback when no YOUTUBE_API_KEY is set: read the playlist page's embedded
+// ytInitialData for video ids and titles. Lists real videos only; transcripts
+// still come from caption tracks. YouTube can change this markup at any time.
+export async function scrapePlaylistListing(playlistId: string, maxVideos: number): Promise<PlaylistListing> {
+  const res = await fetch(`https://www.youtube.com/playlist?list=${encodeURIComponent(playlistId)}`, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+      'Accept-Language': 'en-US,en;q=0.9',
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`YouTube returned HTTP ${res.status} for the playlist page`);
+  const html = await res.text();
+  return parsePlaylistPage(html, maxVideos, playlistId);
+}
+
+export function parsePlaylistPage(html: string, maxVideos: number, playlistId = ''): PlaylistListing {
+  const marker = 'var ytInitialData = ';
+  const start = html.indexOf(marker);
+  if (start === -1) throw new Error('Playlist page did not contain playlist data (private, removed, or markup changed)');
+  const end = html.indexOf(';</script>', start);
+  if (end === -1) throw new Error('Playlist page data was truncated');
+  const data = JSON.parse(html.slice(start + marker.length, end));
+
+  const items: PlaylistListing['items'] = [];
+  const seen = new Set<string>();
+  const walk = (node: any) => {
+    if (!node || typeof node !== 'object' || items.length >= maxVideos) return;
+    const v = node.playlistVideoRenderer;
+    if (v?.videoId && VIDEO_ID_RE.test(v.videoId) && !seen.has(v.videoId)) {
+      seen.add(v.videoId);
+      const secs = Number(v.lengthSeconds);
+      items.push({
+        videoId: v.videoId,
+        title: v.title?.runs?.[0]?.text || v.title?.simpleText || v.videoId,
+        channel: v.shortBylineText?.runs?.[0]?.text || '',
+        duration: v.lengthText?.simpleText || (Number.isFinite(secs) && secs > 0 ? formatTimestamp(secs) : undefined),
+      });
+    }
+    for (const k of Object.keys(node)) walk(node[k]);
+  };
+  walk(data);
+  if (items.length === 0) throw new Error('No videos found on the playlist page');
+
+  const meta = data.metadata?.playlistMetadataRenderer;
+  return {
+    title: meta?.title || data.header?.playlistHeaderRenderer?.title?.simpleText || playlistId,
+    description: meta?.description || '',
+    items,
+    source: 'youtube-page',
+  };
 }
 
 export async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {

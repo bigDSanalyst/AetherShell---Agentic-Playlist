@@ -55,6 +55,9 @@ export interface VideoNode {
   transcriptSource?: 'youtube-captions' | 'unavailable';
   transcriptLanguage?: string;
   transcriptError?: string;
+  uploadDate?: string; // ISO 8601 from the YouTube Data API; absent when unknown
+  // The exact logic object that was signed together with this transcript.
+  boundLogic?: InnershellLogic;
 }
 
 export interface PlaylistData {

@@ -5,16 +5,20 @@ import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 
-import { DEMO_PLAYLISTS } from './server/demoPlaylists';
+import { DEMO_PLAYLISTS, LIVE_PRESETS } from './server/demoPlaylists';
 import {
   fetchPlaylistListing,
+  fetchVideoDetails,
   fetchVideoTranscript,
+  scrapePlaylistListing,
+  type IngestedVideo,
   mapWithConcurrency,
   parseYouTubeUrl,
 } from './server/youtube';
 import { loadSigningKeys, verifyProvenance, watermarkAndCompress } from './server/provenance';
 import { bigramOverlap, changeBetween, contentTokens, logicClaimText, round4, wordOverlap } from './server/grounding';
 import { resolveGitHubFile } from './server/github';
+import { parseModelJson } from './server/modelJson';
 import { envFloat, envInt, rateLimit, requireAccessToken } from './server/http';
 
 dotenv.config();
@@ -39,7 +43,7 @@ if (signingKeys.ephemeral) {
 const MIN_WORD_OVERLAP = envFloat('GUARD_MIN_WORD_OVERLAP', 0.5);
 const MIN_BIGRAM_OVERLAP = envFloat('GUARD_MIN_BIGRAM_OVERLAP', 0.2);
 
-const MODEL_CASCADE = (process.env.GEMINI_MODELS || 'gemini-flash-latest,gemini-3.1-flash-lite,gemini-3.8-flash,gemini-3.1-pro-preview')
+const MODEL_CASCADE = (process.env.GEMINI_MODELS || 'gemini-3.1-flash-lite,gemini-flash-latest,gemini-3.8-flash,gemini-3.1-pro-preview')
   .split(',')
   .map((m) => m.trim())
   .filter(Boolean);
@@ -71,12 +75,11 @@ async function callGemini(options: { contents: any; config?: any; preferredModel
 
 async function callGeminiJson(options: { contents: any; preferredModel?: string; taskName: string }) {
   const { text, modelUsed } = await callGemini({ ...options, config: { responseMimeType: 'application/json' } });
-  try {
-    return { data: JSON.parse(text), modelUsed };
-  } catch {
-    throw new LlmUnavailableError(new Error(`${modelUsed} returned invalid JSON`));
-  }
+  const data = parseModelJson(text);
+  if (data === undefined) throw new LlmUnavailableError(new Error(`${modelUsed} returned invalid JSON`));
+  return { data, modelUsed };
 }
+
 
 function sendError(res: Response, err: any, fallbackMessage: string) {
   if (err instanceof LlmUnavailableError) {
@@ -405,16 +408,53 @@ async function startServer() {
   // Demo playlists (synthetic sample transcripts, clearly labelled).
   app.get('/api/youtube/curated', (_req: Request, res: Response) => {
     res.json({
-      playlists: Object.values(DEMO_PLAYLISTS).map((p) => ({
-        id: p.id,
-        title: p.title,
-        description: p.description,
-        videoCount: p.videos.length,
-        url: p.url,
-        isDemo: true,
-      })),
+      playlists: [
+        ...Object.values(LIVE_PRESETS).map((p) => ({
+          id: p.id,
+          title: p.title,
+          description: p.description,
+          videoCount: p.videos.length,
+          url: p.url,
+          isDemo: false,
+        })),
+        ...Object.values(DEMO_PLAYLISTS).map((p) => ({
+          id: p.id,
+          title: p.title,
+          description: p.description,
+          videoCount: p.videos.length,
+          url: p.url,
+          isDemo: true,
+        })),
+      ],
     });
   });
+
+  // Captions for each listed video, plus upload date / duration from the Data
+  // API when a key is configured. Nothing here is generated.
+  async function ingestVideos(items: { videoId: string; title?: string; channel?: string; uploadDate?: string; duration?: string }[]) {
+    const videos: IngestedVideo[] = await mapWithConcurrency(items, 3, (it) =>
+      fetchVideoTranscript(it.videoId, { title: it.title, channel: it.channel })
+    );
+    const apiKey = process.env.YOUTUBE_API_KEY;
+    let details: Awaited<ReturnType<typeof fetchVideoDetails>> = {};
+    let metadataNote: string | null = null;
+    if (apiKey) {
+      try {
+        details = await fetchVideoDetails(items.map((i) => i.videoId), apiKey);
+      } catch (e: any) {
+        metadataNote = `Video details unavailable: ${e?.message || e}`;
+      }
+    } else {
+      metadataNote = 'Upload dates need YOUTUBE_API_KEY';
+    }
+    videos.forEach((v, i) => {
+      const d = details[v.youtubeId] || {};
+      v.uploadDate = d.uploadDate || items[i].uploadDate || v.uploadDate;
+      v.duration = v.duration || d.duration || items[i].duration || '';
+      if (!v.channel) v.channel = d.channel || items[i].channel || '';
+    });
+    return { videos, metadataNote };
+  }
 
   // Ingest a real YouTube video or playlist. Transcripts come from caption
   // tracks; a video without captions is returned with transcriptError set,
@@ -424,8 +464,20 @@ async function startServer() {
       const { playlistUrl, curatedId } = req.body || {};
 
       if (curatedId) {
+        const preset = LIVE_PRESETS[curatedId];
+        if (preset) {
+          const { videos, metadataNote } = await ingestVideos(preset.videos);
+          const withText = videos.filter((v) => v.transcriptSource === 'youtube-captions').length;
+          return res.json({
+            success: true,
+            source: 'youtube-captions',
+            transcriptCoverage: { withTranscript: withText, total: videos.length },
+            metadataNote,
+            playlist: { id: preset.id, title: preset.title, description: preset.description, url: preset.url, videos },
+          });
+        }
         const demo = DEMO_PLAYLISTS[curatedId];
-        if (!demo) return res.status(404).json({ error: 'Unknown demo playlist' });
+        if (!demo) return res.status(404).json({ error: 'Unknown preset' });
         return res.json({ success: true, playlist: { ...demo, isDemo: true }, source: 'demo' });
       }
       if (!playlistUrl || typeof playlistUrl !== 'string') {
@@ -440,26 +492,27 @@ async function startServer() {
       }
 
       if (parsed.kind === 'video') {
-        const video = await fetchVideoTranscript(parsed.videoId);
+        const { videos, metadataNote } = await ingestVideos([{ videoId: parsed.videoId }]);
+        const video = videos[0];
         if (video.transcriptSource === 'unavailable') {
           return res.status(422).json({ error: `No transcript available for ${parsed.videoId}: ${video.transcriptError}` });
         }
         return res.json({
           success: true,
           source: 'youtube-captions',
+          metadataNote,
           playlist: { id: `video-${parsed.videoId}`, title: video.title, description: `Captions from ${video.url}`, url: video.url, videos: [video] },
         });
       }
 
+      const maxVideos = envInt('YOUTUBE_MAX_PLAYLIST_VIDEOS', 25);
       const apiKey = process.env.YOUTUBE_API_KEY;
-      if (!apiKey) {
-        return res.status(501).json({
-          error: 'Playlist ingestion needs YOUTUBE_API_KEY (YouTube Data API v3). Single video URLs work without it.',
-          code: 'YOUTUBE_API_KEY_MISSING',
-        });
-      }
-      const listing = await fetchPlaylistListing(parsed.playlistId, envInt('YOUTUBE_MAX_PLAYLIST_VIDEOS', 25), apiKey);
-      const videos = await mapWithConcurrency(listing.items, 3, (it) => fetchVideoTranscript(it.videoId, { title: it.title, channel: it.channel }));
+      const listing = apiKey
+        ? await fetchPlaylistListing(parsed.playlistId, maxVideos, apiKey)
+        : await scrapePlaylistListing(parsed.playlistId, maxVideos).catch((e: any) => {
+            throw Object.assign(new Error(`Could not list the playlist without YOUTUBE_API_KEY (${e.message}). Set the key for reliable playlist ingestion.`), { status: 502 });
+          });
+      const { videos, metadataNote } = await ingestVideos(listing.items);
       const withText = videos.filter((v) => v.transcriptSource === 'youtube-captions').length;
       if (withText === 0) {
         return res.status(422).json({ error: 'None of the playlist videos have an available transcript' });
@@ -467,7 +520,9 @@ async function startServer() {
       return res.json({
         success: true,
         source: 'youtube-captions',
+        listingSource: listing.source,
         transcriptCoverage: { withTranscript: withText, total: videos.length },
+        metadataNote,
         playlist: {
           id: `playlist-${parsed.playlistId}`,
           title: listing.title,
@@ -477,6 +532,7 @@ async function startServer() {
         },
       });
     } catch (err: any) {
+      if (err?.status === 502) return res.status(502).json({ error: err.message });
       sendError(res, err, 'Failed to fetch playlist');
     }
   });

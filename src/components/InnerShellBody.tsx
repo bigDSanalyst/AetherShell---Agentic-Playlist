@@ -30,6 +30,7 @@ import {
   SotaReflexiveInvariant,
 } from '../types';
 import { executeInnershellScript } from '../utils/crypto';
+import { copyText } from '../utils/clipboard';
 
 interface InnerShellBodyProps {
   innershellLogic: InnershellLogic | null;
@@ -438,7 +439,7 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
                   <>
                     <button
                       onClick={() => {
-                        navigator.clipboard.writeText(customScriptCode);
+                        void copyText(customScriptCode);
                       }}
                       className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-xs flex items-center gap-1 transition-colors"
                       title="Copy synthesized script to clipboard"

@@ -19,6 +19,8 @@ import {
   Brain,
 } from 'lucide-react';
 import { PlaylistData, VideoNode, CuratedPlaylistSummary } from '../types';
+import { VideoMetadataCard } from './VideoMetadataCard';
+import { copyText } from '../utils/clipboard';
 
 interface PlaylistIngestionProps {
   playlist: PlaylistData | null;
@@ -27,7 +29,8 @@ interface PlaylistIngestionProps {
   setActiveVideo: (video: VideoNode) => void;
   onLoadCurated: (id: string) => void;
   onIngestUrl: (url: string) => void;
-  onDeepTranscribe: (video: VideoNode) => void;
+  onDeepTranscribe: (video?: VideoNode) => void;
+  transcribeProgress?: { current: number; total: number; currentTitle: string; percent: number } | null;
   isLoading: boolean;
   onProceedToInnershell: () => void;
   onProceedToKnowledge: () => void;
@@ -41,6 +44,7 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
   onLoadCurated,
   onIngestUrl,
   onDeepTranscribe,
+  transcribeProgress,
   isLoading,
   onProceedToInnershell,
   onProceedToKnowledge,
@@ -55,17 +59,18 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
     onIngestUrl(inputUrl.trim());
   };
 
-  const handleCopyTranscript = () => {
+  const handleCopyTranscript = async () => {
     if (!activeVideo?.rawTranscript) return;
-    navigator.clipboard.writeText(activeVideo.rawTranscript);
-    setCopiedTranscript(true);
-    setTimeout(() => setCopiedTranscript(false), 2000);
+    if (await copyText(activeVideo.rawTranscript)) {
+      setCopiedTranscript(true);
+      setTimeout(() => setCopiedTranscript(false), 2000);
+    }
   };
 
   const filteredVideos = (playlist?.videos || []).filter(
     (v) =>
-      v.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
-      v.channel.toLowerCase().includes(filterQuery.toLowerCase())
+      (v?.title || '').toLowerCase().includes(filterQuery.toLowerCase()) ||
+      (v?.channel || '').toLowerCase().includes(filterQuery.toLowerCase())
   );
 
   return (
@@ -91,17 +96,20 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
 
           {/* Curated Quick-Load Presets */}
           <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
-            <span className="text-xs font-mono text-amber-400 font-medium" title="Demo playlists use synthetic sample transcripts, not real videos">
-              Demo data (synthetic):
-            </span>
-            {curatedPlaylists.map((cp) => (
+            <span className="text-xs font-mono text-slate-400 font-medium">Presets:</span>
+            {(curatedPlaylists || []).map((cp) => (
               <button
                 key={cp.id}
                 onClick={() => onLoadCurated(cp.id)}
                 disabled={isLoading}
-                className="px-2.5 py-1 rounded-lg text-xs font-mono bg-cyan-950/60 hover:bg-cyan-900/80 border border-cyan-800/60 text-cyan-300 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+                title={cp.isDemo ? `${cp.title} (synthetic sample text)` : `${cp.title} (fetches real captions from YouTube)`}
+                className={`px-2.5 py-1 rounded-lg text-xs font-mono border transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 ${
+                  cp.isDemo
+                    ? 'bg-amber-950/40 hover:bg-amber-900/50 border-amber-800/60 text-amber-300'
+                    : 'bg-cyan-950/60 hover:bg-cyan-900/80 border-cyan-800/60 text-cyan-300'
+                }`}
               >
-                {cp.title.slice(0, 24)}...
+                {cp.title.length > 28 ? `${cp.title.slice(0, 28)}…` : cp.title}
               </button>
             ))}
           </div>
@@ -152,15 +160,50 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
                 </span>
               )}
             </div>
-            <a
-              href={playlist.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-cyan-400 hover:text-cyan-300 font-mono text-[11px]"
-            >
-              <span>Source URL</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
+            <div className="flex items-center gap-3">
+              {!playlist.isDemo && (
+                <button
+                  type="button"
+                  onClick={() => onDeepTranscribe()}
+                  disabled={isLoading}
+                  className="px-3 py-1 rounded-lg bg-cyan-950/60 hover:bg-cyan-900/80 border border-cyan-700/60 text-cyan-300 font-mono text-[11px] flex items-center gap-1.5 transition-all disabled:opacity-50"
+                  title="Fetch YouTube captions again for every video in this playlist"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Re-fetch All Captions</span>
+                </button>
+              )}
+              <a
+                href={playlist.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-cyan-400 hover:text-cyan-300 font-mono text-[11px]"
+              >
+                <span>Source URL</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+          </div>
+        )}
+
+        {transcribeProgress && (
+          <div className="mt-4 p-3.5 rounded-xl bg-cyan-950/40 border border-cyan-700/40 space-y-2" role="status" aria-live="polite">
+            <div className="flex items-center justify-between text-xs font-mono text-cyan-300">
+              <span className="flex items-center gap-2">
+                <span className="w-3.5 h-3.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                Fetching captions
+              </span>
+              <span>
+                {transcribeProgress.current} / {transcribeProgress.total} · {transcribeProgress.percent}%
+              </span>
+            </div>
+            <div className="w-full h-2 rounded-full bg-slate-950 border border-slate-800 overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-300"
+                style={{ width: `${Math.max(4, transcribeProgress.percent)}%` }}
+              />
+            </div>
+            <p className="text-[11px] font-mono text-slate-400 truncate">Current: {transcribeProgress.currentTitle}</p>
           </div>
         )}
       </div>
@@ -188,71 +231,16 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
             </div>
 
             <div className="space-y-2.5 max-h-[640px] overflow-y-auto pr-1">
-              {filteredVideos.map((video, idx) => {
-                const isActive = activeVideo?.id === video.id;
-                const hasSegments = (video.segments?.length || 0) > 0;
-                const isWatermarked = !!video.watermark;
-                const isCompressed = !!video.compressedTranscript;
-
-                return (
-                  <div
-                    key={video.id}
-                    onClick={() => setActiveVideo(video)}
-                    className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
-                      isActive
-                        ? 'bg-cyan-950/40 border-cyan-500/60 shadow-md shadow-cyan-950/30'
-                        : 'bg-slate-900/70 border-slate-800/80 hover:bg-slate-850 hover:border-slate-700'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="flex items-center justify-center w-6 h-6 rounded-md bg-slate-800 font-mono text-[11px] text-cyan-400 font-bold">
-                          {String(idx + 1).padStart(2, '0')}
-                        </span>
-                        <h4 className="text-xs font-medium text-slate-200 line-clamp-1">
-                          {video.title}
-                        </h4>
-                      </div>
-                      <span className="text-[11px] font-mono text-slate-400 flex items-center gap-1 shrink-0">
-                        <Clock className="w-3 h-3 text-slate-500" />
-                        {video.duration}
-                      </span>
-                    </div>
-
-                    <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
-                      <span className="truncate max-w-[160px] text-slate-400 font-mono">
-                        {video.channel}
-                      </span>
-                      <div className="flex items-center gap-1.5 font-mono text-[10px]">
-                        {hasSegments ? (
-                          <span className="px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-800/50 flex items-center gap-1">
-                            <CheckCircle2 className="w-2.5 h-2.5" />
-                            {video.segments?.length} Segs
-                          </span>
-                        ) : (
-                          <span className="px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-800/50">
-                            No Segs
-                          </span>
-                        )}
-
-                        {isWatermarked && (
-                          <span className="px-1.5 py-0.5 rounded bg-cyan-950/80 text-cyan-300 border border-cyan-800/50 flex items-center gap-1">
-                            <ShieldCheck className="w-2.5 h-2.5" />
-                            WM
-                          </span>
-                        )}
-
-                        {isCompressed && (
-                          <span className="px-1.5 py-0.5 rounded bg-indigo-950/80 text-indigo-300 border border-indigo-800/50 flex items-center gap-1">
-                            <Minimize2 className="w-2.5 h-2.5" />
-                            -{video.compressedTranscript?.compressionRatioPercent}%
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+              {filteredVideos.map((video) => (
+                <VideoMetadataCard
+                  key={video.id}
+                  video={video}
+                  index={(playlist?.videos || []).indexOf(video)}
+                  isActive={activeVideo?.id === video.id}
+                  isDemo={!!playlist?.isDemo}
+                  onSelect={setActiveVideo}
+                />
+              ))}
             </div>
           </div>
 

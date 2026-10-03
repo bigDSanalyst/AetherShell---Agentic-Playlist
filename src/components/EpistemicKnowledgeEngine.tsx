@@ -212,7 +212,16 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
       mediaRecorder.start();
       setIsRecording(true);
     } catch (err) {
-      alert('Microphone access was denied or not supported in this browser.');
+      console.warn('Microphone access denied:', err);
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: `mic-err-${Date.now()}`,
+          role: 'model',
+          content: 'Microphone access was denied or not supported in this environment. Please type your query in the input box.',
+          timestamp: Date.now(),
+        },
+      ]);
     }
   };
 
@@ -223,10 +232,38 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
     }
   };
 
-  const handleCopyQuote = (quote: string) => {
-    navigator.clipboard.writeText(quote);
-    setCopiedQuote(quote);
-    setTimeout(() => setCopiedQuote(null), 2000);
+  const handleCopyQuote = async (quote: string) => {
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(quote);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = quote;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopiedQuote(quote);
+      setTimeout(() => setCopiedQuote(null), 2000);
+    } catch {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = quote;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        setCopiedQuote(quote);
+        setTimeout(() => setCopiedQuote(null), 2000);
+      } catch (err) {
+        console.warn('Quote copy prevented:', err);
+      }
+    }
   };
 
   return (

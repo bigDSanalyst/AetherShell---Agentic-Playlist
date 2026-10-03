@@ -302,7 +302,7 @@ export const WatermarkPipeline: React.FC<WatermarkPipelineProps> = ({
                 {/* Big Compression Ratio Gauge */}
                 <div className="p-4 rounded-xl bg-gradient-to-br from-indigo-950/50 to-slate-950 border border-indigo-800/40 text-center space-y-1">
                   <span className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-indigo-400">
-                    -{compressed.compressionRatioPercent}%
+                    -{compressed.compressionRatioPercent ?? 0}%
                   </span>
                   <p className="text-[11px] text-slate-400">Context Window Token Reduction</p>
                 </div>
@@ -312,14 +312,14 @@ export const WatermarkPipeline: React.FC<WatermarkPipelineProps> = ({
                   <div className="flex items-center justify-between p-2.5 rounded bg-slate-950 border border-slate-800 text-[11px]">
                     <span className="text-slate-400">Pre-Compression Tokens:</span>
                     <span className="text-slate-200 font-bold">
-                      {compressed.rawSizeTokens.toLocaleString()} tokens
+                      {(compressed.rawSizeTokens ?? 0).toLocaleString()} tokens
                     </span>
                   </div>
 
                   <div className="flex items-center justify-between p-2.5 rounded bg-slate-950 border border-slate-800 text-[11px]">
                     <span className="text-slate-400">Compressed Byte Payload:</span>
                     <span className="text-indigo-300 font-bold">
-                      {compressed.compressedSizeBytes.toLocaleString()} bytes
+                      {(compressed.compressedSizeBytes ?? 0).toLocaleString()} bytes
                     </span>
                   </div>
 

@@ -17,6 +17,10 @@ and check the logic against the transcript before it is accepted
 | Lexical grounding | Overlap of vocabulary, not meaning. It catches invented terms; it cannot prove a paraphrase is faithful. That is what the LLM review is for, and that review is a model judgement. |
 | Script sandbox | Model-written scripts and imported guard wrappers run in a sandboxed iframe (opaque origin, CSP `default-src 'none'`) inside a Worker with a 2 s timeout: no access to the page, cookies, storage or network. |
 | GitHub guards | Only `raw.githubusercontent.com` is fetched (URL parsed and rebuilt, redirects refused). The guard's JS wrapper runs in the sandbox; the Gemini review runs on the server. Both must pass. |
+| Presets | The "AetherShell: IMO AI & Information Entropy" preset lists four real 3Blue1Brown video ids; their transcripts are fetched from captions when you load it. |
+| Playlist listing | With `YOUTUBE_API_KEY`: YouTube Data API (also gives upload dates). Without it: the playlist page is read for ids/titles/durations (best effort; YouTube may change that markup). |
+| Video cards | Thumbnail from `i.ytimg.com/vi/<id>/mqdefault.jpg`, duration, and upload date. Upload dates need `YOUTUBE_API_KEY`; otherwise the card says "unknown". |
+| Playlist export | Output Hub → "Export Playlist JSON": every video's signed manifest, DEFLATE-compressed transcript, and the exact logic signed with it, plus the signer's public key. The file re-checks each logic hash; videos not yet signed are listed as `not_signed`. |
 | AetherTwin | Records guard outcomes you actually ran (starts empty). The counterfactual tool replays observed runs with a different grounding limit. It does not predict anything else. |
 
 ## Running locally

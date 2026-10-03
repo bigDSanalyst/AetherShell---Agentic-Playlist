@@ -54,7 +54,12 @@ export async function fetchCuratedPlaylists(): Promise<CuratedPlaylistSummary[]>
 export async function fetchPlaylistData(params: {
   playlistUrl?: string;
   curatedId?: string;
-}): Promise<{ playlist: PlaylistData; source: string }> {
+}): Promise<{
+  playlist: PlaylistData;
+  source: string;
+  metadataNote?: string | null;
+  transcriptCoverage?: { withTranscript: number; total: number };
+}> {
   const res = await apiFetch('/api/youtube/fetch-playlist', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -384,3 +389,12 @@ export async function syncTwinToPrimary(): Promise<{ success: boolean; message: 
 }
 
 
+
+export async function fetchSignerPublicKey(): Promise<{ algorithm: string; publicKeyPem: string; fingerprint: string; ephemeral: boolean }> {
+  const res = await apiFetch('/api/crypto/public-key');
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch signer public key');
+  }
+  return res.json();
+}

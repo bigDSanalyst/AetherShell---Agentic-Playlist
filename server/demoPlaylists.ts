@@ -210,3 +210,28 @@ for (const pl of Object.values(DEMO_PLAYLISTS)) {
     }
   }
 }
+
+// Presets of REAL YouTube videos. Only ids and titles are stored here; the
+// transcript for each is fetched from its caption track when the preset loads.
+export interface LivePreset {
+  id: string;
+  title: string;
+  description: string;
+  url: string;
+  videos: { videoId: string; title: string; channel: string }[];
+}
+
+export const LIVE_PRESETS: Record<string, LivePreset> = {
+  'aethershell-user-playlist': {
+    id: 'aethershell-user-playlist',
+    title: 'AetherShell: IMO AI & Information Entropy (3Blue1Brown)',
+    description: 'Four 3Blue1Brown videos. Transcripts are fetched from YouTube captions when loaded.',
+    url: 'https://youtube.com/playlist?list=PLHLzviV6Lxzc',
+    videos: [
+      { videoId: 'Nbwv5wHQoj0', title: 'The last IMO problem AI could not solve', channel: '3Blue1Brown' },
+      { videoId: 'GlYgs6v2YfU', title: 'But what is cross-entropy? | Compression is Intelligence Part 2', channel: '3Blue1Brown' },
+      { videoId: 'l6DKRf-fAAM', title: 'Reinventing Entropy | Compression is Intelligence Part 1', channel: '3Blue1Brown' },
+      { videoId: 'j0wJBEZdwLs', title: 'But what is a Laplace Transform?', channel: '3Blue1Brown' },
+    ],
+  },
+};

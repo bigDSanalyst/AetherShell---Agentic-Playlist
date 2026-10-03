@@ -9,6 +9,7 @@ import { SessionMemoryModal } from './components/SessionMemoryModal';
 import { EpistemicKnowledgeEngine } from './components/EpistemicKnowledgeEngine';
 import { AetherTwinParallel } from './components/AetherTwinParallel';
 import { AetherOutputHubModal } from './components/AetherOutputHubModal';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import {
   PlaylistData,
   VideoNode,
@@ -73,15 +74,36 @@ export default function App() {
   // Loading & Toast State
   const [isLoading, setIsLoading] = useState(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+  const [transcribeProgress, setTranscribeProgress] = useState<{
+    current: number;
+    total: number;
+    currentTitle: string;
+    percent: number;
+  } | null>(null);
 
   // Multi-Session Persistent Memory
   const [sessionMemory, setSessionMemory] = useState<PersistentSessionMemory>(() => {
     try {
       const stored = localStorage.getItem(SESSION_STORAGE_KEY);
       if (stored) {
-        return JSON.parse(stored);
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === 'object') {
+          return {
+            sessionId: parsed.sessionId || `SESSION-${Date.now().toString(36).toUpperCase()}`,
+            sessionName: parsed.sessionName || 'Default Active Working Lattice',
+            createdAt: parsed.createdAt || Date.now(),
+            lastActive: parsed.lastActive || Date.now(),
+            memoryLattice:
+              parsed.memoryLattice && typeof parsed.memoryLattice === 'object'
+                ? parsed.memoryLattice
+                : { agenticPhase: 'INIT', sessionStep: 1, activeInvariantThreshold: 0.95, executionHistory: [] },
+            historyRuns: Array.isArray(parsed.historyRuns) ? parsed.historyRuns : [],
+          };
+        }
       }
-    } catch {}
+    } catch (err) {
+      console.warn('Failed to parse session memory from localStorage, resetting to default:', err);
+    }
     return {
       sessionId: `SESSION-${Date.now().toString(36).toUpperCase()}`,
       sessionName: 'Default Active Working Lattice',
@@ -117,8 +139,10 @@ export default function App() {
       try {
         const curated = await fetchCuratedPlaylists();
         setCuratedPlaylists(curated);
-        if (curated.length > 0) {
-          const res = await fetchPlaylistData({ curatedId: curated[0].id });
+        // Start on offline demo data; live presets hit YouTube, so load them on click.
+        const firstDemo = curated.find((c) => c.isDemo);
+        if (firstDemo) {
+          const res = await fetchPlaylistData({ curatedId: firstDemo.id });
           setPlaylist(res.playlist);
           if (res.playlist.videos.length > 0) {
             setActiveVideo(res.playlist.videos[0]);
@@ -132,21 +156,27 @@ export default function App() {
     init();
   }, []);
 
+  const applyIngested = (res: Awaited<ReturnType<typeof fetchPlaylistData>>) => {
+    setPlaylist(res.playlist);
+    const firstWithText = res.playlist.videos.find((v) => v.rawTranscript) || res.playlist.videos[0];
+    if (firstWithText) setActiveVideo(firstWithText);
+    if (res.playlist.isDemo) {
+      showToast(`Loaded demo playlist (synthetic transcripts): "${res.playlist.title}"`, 'info');
+      return;
+    }
+    const withText = res.playlist.videos.filter((v) => v.rawTranscript).length;
+    showToast(
+      `Ingested "${res.playlist.title}": captions for ${withText}/${res.playlist.videos.length} video(s)` +
+        (res.metadataNote ? ` · ${res.metadataNote}` : ''),
+      withText === res.playlist.videos.length ? 'success' : 'info'
+    );
+  };
+
   // Handler: Ingest URL or select curated
   const handleIngestUrl = async (url: string) => {
     setIsLoading(true);
     try {
-      const res = await fetchPlaylistData({ playlistUrl: url });
-      setPlaylist(res.playlist);
-      const firstWithText = res.playlist.videos.find((v) => v.rawTranscript) || res.playlist.videos[0];
-      if (firstWithText) {
-        setActiveVideo(firstWithText);
-      }
-      const withText = res.playlist.videos.filter((v) => v.rawTranscript).length;
-      showToast(
-        `Ingested "${res.playlist.title}": captions for ${withText}/${res.playlist.videos.length} video(s)`,
-        withText === res.playlist.videos.length ? 'success' : 'info'
-      );
+      applyIngested(await fetchPlaylistData({ playlistUrl: url }));
     } catch (err: any) {
       showToast(err.message || 'Failed to ingest playlist', 'error');
     } finally {
@@ -157,51 +187,66 @@ export default function App() {
   const handleLoadCurated = async (id: string) => {
     setIsLoading(true);
     try {
-      const res = await fetchPlaylistData({ curatedId: id });
-      setPlaylist(res.playlist);
-      if (res.playlist.videos.length > 0) {
-        setActiveVideo(res.playlist.videos[0]);
-      }
-      showToast(`Loaded demo playlist (synthetic transcripts): "${res.playlist.title}"`, 'info');
+      applyIngested(await fetchPlaylistData({ curatedId: id }));
     } catch (err: any) {
-      showToast(err.message || 'Failed to load curated playlist', 'error');
+      showToast(err.message || 'Failed to load playlist', 'error');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Handler: Deep transcribe individual video
-  const handleDeepTranscribe = async (video: VideoNode) => {
+  const captionsToVideo = (video: VideoNode, segments: any[]): VideoNode => ({
+    ...video,
+    segments,
+    rawTranscript: segments.map((s: any) => `[${s.start} - ${s.end}] ${s.speaker}: ${s.text}`).join('\n\n'),
+    transcriptSource: 'youtube-captions',
+    transcriptError: undefined,
+  });
+
+  // Re-fetch YouTube captions for one video, or (no argument) for every video
+  // in the playlist, sequentially with progress. Never generates text.
+  const handleDeepTranscribe = async (targetVideo?: VideoNode) => {
+    if (playlist?.isDemo) {
+      showToast('Demo videos are not real YouTube videos; there are no captions to fetch', 'info');
+      return;
+    }
+    const videosToProcess = targetVideo ? [targetVideo] : playlist?.videos || [];
+    if (videosToProcess.length === 0) {
+      showToast('No videos to fetch captions for', 'error');
+      return;
+    }
+
     setIsLoading(true);
+    const total = videosToProcess.length;
+    const updated = new Map<string, VideoNode>();
+    let ok = 0;
     try {
-      const res = await fetchVideoCaptions({ youtubeId: video.youtubeId });
-
-      const updatedSegments = res.segments;
-      const updatedRaw = updatedSegments
-        .map((s: any) => `[${s.start} - ${s.end}] ${s.speaker}: ${s.text}`)
-        .join('\n\n');
-
-      const updatedVideo = {
-        ...video,
-        segments: updatedSegments,
-        rawTranscript: updatedRaw,
-      };
-
-      setActiveVideo(updatedVideo);
-
-      // Update in playlist
-      if (playlist) {
-        setPlaylist({
-          ...playlist,
-          videos: playlist.videos.map((v) => (v.id === video.id ? updatedVideo : v)),
-        });
+      for (let i = 0; i < total; i++) {
+        const v = videosToProcess[i];
+        setTranscribeProgress({ current: i, total, currentTitle: v.title, percent: Math.round((i / total) * 100) });
+        try {
+          const res = await fetchVideoCaptions({ youtubeId: v.youtubeId });
+          updated.set(v.id, captionsToVideo(v, res.segments || []));
+          ok++;
+        } catch (err: any) {
+          updated.set(v.id, { ...v, transcriptError: err?.message || 'Captions unavailable' });
+        }
       }
+      setTranscribeProgress({ current: total, total, currentTitle: 'Done', percent: 100 });
 
-      showToast(`Re-fetched YouTube captions for "${video.title}"`, 'success');
-    } catch (err: any) {
-      showToast(err.message || 'Transcription failed', 'error');
+      if (playlist) {
+        setPlaylist({ ...playlist, videos: playlist.videos.map((v) => updated.get(v.id) || v) });
+      }
+      if (activeVideo && updated.has(activeVideo.id)) setActiveVideo(updated.get(activeVideo.id)!);
+
+      if (total === 1) {
+        showToast(ok ? `Re-fetched YouTube captions for "${videosToProcess[0].title}"` : `No captions: ${updated.get(videosToProcess[0].id)?.transcriptError}`, ok ? 'success' : 'error');
+      } else {
+        showToast(`Fetched captions for ${ok}/${total} videos`, ok === total ? 'success' : 'info');
+      }
     } finally {
       setIsLoading(false);
+      setTranscribeProgress(null);
     }
   };
 
@@ -268,6 +313,8 @@ export default function App() {
       const updatedVideo = {
         ...activeVideo,
         watermark: res.watermark,
+        // Keep the exact logic object that was signed with this transcript.
+        boundLogic: innershellLogic,
         compressedTranscript: res.compressed,
       };
 
@@ -474,6 +521,8 @@ export default function App() {
     setRclAnalysis(null);
     setLastExecutionResult(null);
     setGuardReport(null);
+    setGuardReportBeta(null);
+    setDualComparisonReport(null);
     setBoundaryStatus('LOCKED');
     showToast('Session memory and active pipeline reset', 'info');
   };
@@ -523,6 +572,7 @@ export default function App() {
 
       {/* Main Body */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6 space-y-6">
+        <ErrorBoundary key={activeTab} fallbackTitle="This panel hit an error">
         {/* Phase Boundary Membrane (Always visible between steps) */}
         <PhaseBoundary
           boundaryStatus={boundaryStatus}
@@ -543,6 +593,7 @@ export default function App() {
             onLoadCurated={handleLoadCurated}
             onIngestUrl={handleIngestUrl}
             onDeepTranscribe={handleDeepTranscribe}
+            transcribeProgress={transcribeProgress}
             isLoading={isLoading}
             onProceedToInnershell={() => setActiveTab('innershell')}
             onProceedToKnowledge={() => setActiveTab('knowledge')}
@@ -647,9 +698,11 @@ export default function App() {
             showToast={showToast}
           />
         )}
+        </ErrorBoundary>
       </main>
 
       {/* Persistent Multi-Session Memory Modal */}
+      <ErrorBoundary fallbackTitle="Session memory panel hit an error">
       <SessionMemoryModal
         isOpen={isMemoryModalOpen}
         onClose={() => setIsMemoryModalOpen(false)}
@@ -663,9 +716,12 @@ export default function App() {
         }
         onResetSession={handleResetSession}
       />
+      </ErrorBoundary>
 
       {/* AetherShell Output Tool: Copy / Paste / Download Modal */}
+      <ErrorBoundary fallbackTitle="Output hub hit an error">
       <AetherOutputHubModal
+        playlist={playlist}
         isOpen={isOutputHubOpen}
         onClose={() => setIsOutputHubOpen(false)}
         activeVideo={activeVideo}
@@ -696,6 +752,7 @@ export default function App() {
         }}
         showToast={showToast}
       />
+      </ErrorBoundary>
 
       {/* Footer */}
       <footer className="border-t border-slate-900 bg-slate-950 py-4 text-center text-xs text-slate-500 font-mono">
