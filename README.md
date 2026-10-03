@@ -21,7 +21,10 @@ and check the logic against the transcript before it is accepted
 | Playlist listing | With `YOUTUBE_API_KEY`: YouTube Data API (also gives upload dates). Without it: the playlist page is read for ids/titles/durations (best effort; YouTube may change that markup). |
 | Video cards | Thumbnail from `i.ytimg.com/vi/<id>/mqdefault.jpg`, duration, and upload date. Upload dates need `YOUTUBE_API_KEY`; otherwise the card says "unknown". |
 | Playlist export | Output Hub → "Export Playlist JSON": every video's signed manifest, DEFLATE-compressed transcript, and the exact logic signed with it, plus the signer's public key. The file re-checks each logic hash; videos not yet signed are listed as `not_signed`. |
-| AetherTwin | Records guard outcomes you actually ran (starts empty). The counterfactual tool replays observed runs with a different grounding limit. It does not predict anything else. |
+| Run ledger | Every signing and every guard verdict the server produces is appended to `data/ledger.jsonl`: hash-chained, digests only. `GET /api/ledger/head` returns a signed head (size + Merkle root), `/api/ledger/proof/:seq` an inclusion proof, `/api/ledger/verify` the chain check. A ledger that fails verification on load is reported and not appended to. Ported from Dharmapala's run records. |
+| Drift monitor | An anytime-valid e-process (from Dharmapala's `eprocess.py`) over guard failures in the ledger flags a failure rate credibly above `DRIFT_P0` (default 15%) at false-alarm level `DRIFT_ALPHA` (default 0.01). Runs where the model was unavailable are left out. |
+| Doctor | `npm run doctor` (or `GET /api/doctor`) reports which layers are actually running: `ok`, `DEGRADED`, or `BLOCK`, each with the fix. Pattern from syndicate-genesis. |
+| AetherTwin | Reads guard outcomes from the server's run ledger; it no longer accepts reports from the browser. The counterfactual tool replays observed Guard Alpha runs with a different grounding limit. It does not predict anything else. |
 
 ## Running locally
 
@@ -31,6 +34,7 @@ cp .env.example .env   # set GEMINI_API_KEY at least
 npm run dev            # http://127.0.0.1:3000
 ```
 
+* `npm run doctor`: what is configured and what is degraded, before you trust a run.
 * `npm test`: unit tests (signing/verification, tamper cases, URL validation, caption grouping, grounding).
 * `npm run lint`: TypeScript check.
 * `npm run build && NODE_ENV=production npm start`: production build.

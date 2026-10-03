@@ -338,6 +338,19 @@ export interface ParallelShadowState {
   }[];
   lastSyncTimestamp: number;
   appliedToPrimaryCount: number;
+  // From the server's run ledger (anytime-valid e-process over guard failures).
+  ledgerSize?: number;
+  drift?: {
+    n: number;
+    failures: number;
+    failureRate: number;
+    p0: number;
+    alpha: number;
+    logE: number;
+    threshold: number;
+    drifted: boolean;
+    direction: 'rising' | 'falling' | 'flat';
+  };
 }
 
 export interface PersistentSessionMemory {
