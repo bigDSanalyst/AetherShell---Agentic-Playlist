@@ -29,8 +29,12 @@ Run lint and tests before every commit.
 1. **Nothing is invented to fill a gap.** No generated transcripts, no
    default scores, no "APPROVED"/"VERIFIED" fallbacks. Missing data is shown
    as missing ("not run", "unknown"). A check that could not run fails closed.
-2. **The guard only ever tightens.** Never relax a threshold, a signature
-   check or a fail-closed branch to make a test or a run pass.
+2. **Only the owner changes the guards.** Guard settings live in the
+   owner-signed charter (`server/charter.ts`); never read them from the
+   environment, hardcode a bypass, or relax a fail-closed branch. You cannot
+   sign a charter (the owner key is not on the server). If a guard setting
+   looks wrong, propose the change with its reasoning
+   (`npm run owner -- propose`) and leave the decision to the owner.
 3. **Model output is untrusted data.** It is never `eval`ed in the page; code
    runs only in `src/utils/sandbox.ts`. Prompts mark inputs as data.
 4. **The run ledger is evidence.** `data/ledger.jsonl` (or
@@ -46,6 +50,7 @@ Run lint and tests before every commit.
 | --- | --- |
 | Signing, hashes, guard provenance checks | `server/provenance.ts` |
 | Guard Beta's independent verifier (must not import provenance.ts) | `server/witness.ts` |
+| Guard charter (owner-signed settings) | `server/charter.ts`, `scripts/owner.ts` |
 | Run ledger, Merkle head/proofs | `server/runLedger.ts` |
 | Drift monitor (e-process) | `server/eprocess.ts` |
 | Deployment self-check | `server/doctor.ts`, `scripts/doctor.ts` |

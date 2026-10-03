@@ -119,7 +119,7 @@ export interface RclAnalysis {
     environmentBoundary: string;
     memoryLatticeNodes: number;
     invariantTolerances: {
-      driftThreshold: number;
+      driftThreshold: number | null; // from the owner-signed charter; null when there is none
       provenanceEnforced: boolean;
     };
     [key: string]: any;

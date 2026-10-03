@@ -20,6 +20,19 @@ import { bigramOverlap, changeBetween, contentTokens, logicClaimText, round4, wo
 import { resolveGitHubFile } from './server/github';
 import { parseModelJson } from './server/modelJson';
 import { compareWithPrimary, witnessRead } from './server/witness';
+import {
+  CharterError,
+  assessChange,
+  charterSha256,
+  loadCharterState,
+  validateCharter,
+  verifyCharterSignature,
+  writeCharterFile,
+  type CharterState,
+  type GuardSettings,
+  type LedgerCharterRecord,
+  type SignedCharter,
+} from './server/charter';
 import { RunLedger, type LedgerEntry } from './server/runLedger';
 import { ledgerDrift } from './server/eprocess';
 import { diagnose } from './server/doctor';
@@ -43,6 +56,67 @@ const runLedger = new RunLedger(signingKeys, LEDGER_PATH || null);
 if (runLedger.loadProblems.length) {
   console.error(`[ledger] ${LEDGER_PATH} failed verification; new entries will be refused: ${runLedger.loadProblems.join('; ')}`);
 }
+// Guard charter: every guard setting, signed by the owner (see server/charter.ts).
+// No environment variable can change a guard setting; without a valid charter
+// the guards refuse to run.
+const CHARTER_PATH = process.env.AETHERSHELL_CHARTER_PATH || path.resolve(__dirname, 'data', 'charter.json');
+
+function lastLedgerCharter(): LedgerCharterRecord | null {
+  const e = [...runLedger.all()].reverse().find((x) => x.kind === 'charter');
+  return e ? (e.data as unknown as LedgerCharterRecord) : null;
+}
+
+function guardRunRecords() {
+  return runLedger.all().filter((e) => e.kind === 'guard').map((e) => e.data);
+}
+
+let charterState: CharterState = loadCharterState({
+  ownerPublicKeyRaw: process.env.AETHERSHELL_OWNER_PUBLIC_KEY,
+  serverKeyFingerprint: signingKeys.fingerprint,
+  charterPath: CHARTER_PATH,
+  lastLedgerCharter: lastLedgerCharter(),
+});
+
+// Enter an accepted charter in the ledger, with the system's assessment of
+// what it changes relative to the previous one.
+function recordCharter(st: CharterState, prevGuard: GuardSettings | null) {
+  const c = st.signed!.charter;
+  const assessment = prevGuard ? assessChange(prevGuard, c.guard, guardRunRecords()) : null;
+  return runLedger.append('charter', {
+    version: c.version,
+    charterSha256: st.sha256,
+    ownerKeyFingerprint: st.ownerKeyFingerprint,
+    ownerPublicKeyPem: st.ownerPublicKeyPem,
+    nextOwnerKeyFingerprint: c.nextOwnerKeyFingerprint ?? null,
+    reason: c.reason,
+    guard: c.guard,
+    ownerSignature: st.signed!.ownerSignature,
+    assessment,
+  });
+}
+
+if (charterState.ok) {
+  const last = lastLedgerCharter();
+  if (!last || last.charterSha256 !== charterState.sha256) {
+    try {
+      recordCharter(charterState, last ? ((last as any).guard as GuardSettings) : null);
+    } catch (e: any) {
+      charterState = { ...charterState, ok: false, problems: [`Could not record the charter in the ledger: ${e.message}`] };
+    }
+  }
+}
+if (!charterState.ok) {
+  console.warn(`[charter] Guards are disabled until a valid owner-signed charter is in place: ${charterState.problems.join('; ')}`);
+}
+
+class NoCharterError extends Error {}
+function activeGuard(): GuardSettings {
+  if (!charterState.ok || !charterState.signed) {
+    throw new NoCharterError(`Guards are disabled: ${charterState.problems.join('; ') || 'no valid charter'}`);
+  }
+  return charterState.signed.charter.guard;
+}
+
 const DRIFT_P0 = envFloat('DRIFT_P0', 0.15);
 const DRIFT_ALPHA = envFloat('DRIFT_ALPHA', 0.01);
 
@@ -60,10 +134,6 @@ if (signingKeys.ephemeral) {
   );
 }
 
-// Lexical grounding thresholds (see server/grounding.ts). Logic whose content
-// words / word pairs are mostly absent from the transcript fails the guard.
-const MIN_WORD_OVERLAP = envFloat('GUARD_MIN_WORD_OVERLAP', 0.5);
-const MIN_BIGRAM_OVERLAP = envFloat('GUARD_MIN_BIGRAM_OVERLAP', 0.2);
 
 const MODEL_CASCADE = (process.env.GEMINI_MODELS || 'gemini-3.1-flash-lite,gemini-flash-latest,gemini-3.8-flash,gemini-3.1-pro-preview')
   .split(',')
@@ -77,10 +147,11 @@ class LlmUnavailableError extends Error {
   }
 }
 
-async function callGemini(options: { contents: any; config?: any; preferredModel?: string; taskName: string }) {
+async function callGemini(options: { contents: any; config?: any; preferredModel?: string; taskName: string; models?: string[] }) {
   // Only models from the configured cascade may be requested by the client.
+  // An explicit list (the charter's guard reviewers) replaces the cascade.
   const preferred = options.preferredModel && MODEL_CASCADE.includes(options.preferredModel) ? options.preferredModel : null;
-  const models = preferred ? [preferred, ...MODEL_CASCADE.filter((m) => m !== preferred)] : MODEL_CASCADE;
+  const models = options.models ?? (preferred ? [preferred, ...MODEL_CASCADE.filter((m) => m !== preferred)] : MODEL_CASCADE);
   let lastError: unknown = new Error('No models configured');
   for (const model of models) {
     try {
@@ -95,7 +166,7 @@ async function callGemini(options: { contents: any; config?: any; preferredModel
   throw new LlmUnavailableError(lastError);
 }
 
-async function callGeminiJson(options: { contents: any; preferredModel?: string; taskName: string }) {
+async function callGeminiJson(options: { contents: any; preferredModel?: string; taskName: string; models?: string[] }) {
   const { text, modelUsed } = await callGemini({ ...options, config: { responseMimeType: 'application/json' } });
   const data = parseModelJson(text);
   if (data === undefined) throw new LlmUnavailableError(new Error(`${modelUsed} returned invalid JSON`));
@@ -191,6 +262,7 @@ type Evaluator = 'alpha' | 'beta';
 
 async function runGuardShell(evaluator: Evaluator, body: any) {
   const { directTranscript, watermark, compressedRecord, innershellLogic, executedOutput, adversarialStrictness = 'HIGH' } = body;
+  const guard = activeGuard(); // throws if there is no valid owner-signed charter
 
   const provenance = verifyProvenance(signingKeys, { directTranscript, innershellLogic, watermark, compressedRecord });
 
@@ -200,7 +272,7 @@ async function runGuardShell(evaluator: Evaluator, body: any) {
   // agrees with the primary reading field by field; any disagreement means
   // one implementation is wrong, so it is a refusal.
   let witness: null | (ReturnType<typeof witnessRead> & { agreesWithPrimary: boolean; disagreements: string[] }) = null;
-  if (evaluator === 'beta') {
+  if (evaluator === 'beta' && guard.requireWitness) {
     const w = witnessRead(signingKeys.publicKeyPem, { directTranscript, innershellLogic, watermark, compressedRecord });
     const d = provenance.cryptographicDetails;
     const cmp = compareWithPrimary(
@@ -212,7 +284,7 @@ async function runGuardShell(evaluator: Evaluator, body: any) {
 
   const claimText = logicClaimText(innershellLogic);
   const ov = evaluator === 'alpha' ? wordOverlap(claimText, directTranscript) : bigramOverlap(claimText, directTranscript);
-  const minOverlap = evaluator === 'alpha' ? MIN_WORD_OVERLAP : MIN_BIGRAM_OVERLAP;
+  const minOverlap = evaluator === 'alpha' ? guard.minWordOverlap : guard.minBigramOverlap;
   const semanticDistanceDelta = round4(1 - ov.ratio);
   const epsilonThreshold = round4(1 - minOverlap);
   const groundingPassed = ov.total > 0 && ov.ratio >= minOverlap;
@@ -255,7 +327,7 @@ Return JSON:
   let llmAvailable = true;
   let modelUsed: string | null = null;
   try {
-    const out = await callGeminiJson({ contents: prompt, taskName: `guard-${evaluator}` });
+    const out = await callGeminiJson({ contents: prompt, taskName: `guard-${evaluator}`, models: guard.reviewModels });
     modelUsed = out.modelUsed;
     const a = out.data || {};
     const decision = ['APPROVED', 'QUARANTINED', 'REVISE_VIA_FEEDBACK_LOOP'].includes(a.boundaryDecision) ? a.boundaryDecision : 'QUARANTINED';
@@ -323,7 +395,7 @@ Return JSON:
         ...witness.reasons,
       ]
     : provenance.failures;
-  const llmPassed = llmAvailable && semanticAudit.boundaryDecision === 'APPROVED';
+  const llmPassed = guard.requireLlmApproval ? llmAvailable && semanticAudit.boundaryDecision === 'APPROVED' : true;
   const passedPhaseBoundary = channelPassed && groundingPassed && llmPassed;
 
   let failureModeClassification: 'NONE' | 'CHANNEL_DRIFT' | 'SYNTHESIS_DRIFT' | 'FORMAL_INVARIANT_VIOLATION' = 'NONE';
@@ -739,7 +811,11 @@ ${RCL_SCHEMA}`;
             contextWindowUnit: 'characters',
             environmentBoundary: 'server (Gemini) → browser sandbox',
             memoryLatticeNodes: Object.keys(sessionMemory || {}).length,
-            invariantTolerances: { driftThreshold: round4(1 - MIN_WORD_OVERLAP), provenanceEnforced: true },
+            // From the owner-signed charter; null when there is none (guards are off).
+            invariantTolerances: {
+              driftThreshold: charterState.ok && charterState.signed ? round4(1 - charterState.signed.charter.guard.minWordOverlap) : null,
+              provenanceEnforced: true,
+            },
           },
         },
         innershellLogic,
@@ -757,6 +833,7 @@ ${RCL_SCHEMA}`;
         return res.status(400).json({ error: 'directTranscript and innershellLogic are required' });
       }
       const report = await runGuardShell(evaluator, req.body);
+      const charter = charterState.signed!.charter;
       const g2 = report.multiGuardTelemetry.guard2SemanticAuditor;
       const entry = runLedger.append('guard', {
         runId: String(innershellLogic?.logicId || 'unknown').slice(0, 80),
@@ -772,9 +849,16 @@ ${RCL_SCHEMA}`;
         llmAvailable: report.llmAvailable,
         witnessAgreed: report.witness ? report.witness.agreesWithPrimary : null,
         modelDecision: report.semanticAudit.boundaryDecision,
+        charterVersion: charter.version,
+        charterSha256: charterState.sha256,
       });
-      res.json({ success: true, guardReport: { ...report, ledgerSeq: entry.seq, ledgerHash: entry.hash }, evaluator });
+      res.json({
+        success: true,
+        guardReport: { ...report, ledgerSeq: entry.seq, ledgerHash: entry.hash, charterVersion: charter.version, charterSha256: charterState.sha256 },
+        evaluator,
+      });
     } catch (err: any) {
+      if (err instanceof NoCharterError) return res.status(503).json({ error: err.message, code: 'NO_VALID_CHARTER' });
       sendError(res, err, 'Guard Shell validation failed');
     }
   };
@@ -1103,6 +1187,67 @@ Return JSON: { "passed": boolean, "score": 0-100, "decision": "APPROVED" | "QUAR
     });
   });
 
+  // Guard charter: read it, have the system assess a proposed change, and
+  // accept a new version signed by the owner. The server can never sign one.
+  app.get('/api/charter', (_req: Request, res: Response) => {
+    res.json({
+      success: true,
+      ok: charterState.ok,
+      problems: charterState.problems,
+      charter: charterState.signed?.charter ?? null,
+      charterSha256: charterState.sha256,
+      ownerKeyFingerprint: charterState.ownerKeyFingerprint,
+      path: CHARTER_PATH,
+    });
+  });
+
+  // The system's side of the exchange: what a proposed change would do, from
+  // the record, before anyone signs it.
+  app.post('/api/charter/assess', (req: Request, res: Response) => {
+    if (!charterState.ok || !charterState.signed) {
+      return res.status(409).json({ error: 'No valid charter to compare against', problems: charterState.problems });
+    }
+    const proposed = { ...charterState.signed.charter.guard, ...(req.body?.guard || {}) };
+    try {
+      validateCharter({ ...charterState.signed.charter, guard: proposed });
+    } catch (e: any) {
+      return res.status(400).json({ error: e.message });
+    }
+    res.json({ success: true, assessment: assessChange(charterState.signed.charter.guard, proposed, guardRunRecords()) });
+  });
+
+  app.post('/api/charter', (req: Request, res: Response) => {
+    const sc = req.body as SignedCharter;
+    try {
+      validateCharter(sc?.charter);
+    } catch (e: any) {
+      return res.status(400).json({ error: e instanceof CharterError ? e.message : 'Invalid charter' });
+    }
+    if (!charterState.ownerKey) {
+      return res.status(409).json({ error: 'No usable owner key configured', problems: charterState.problems });
+    }
+    if (!verifyCharterSignature(sc, charterState.ownerKey)) {
+      return res.status(403).json({ error: 'Charter is not signed by the owner key' });
+    }
+    const last = lastLedgerCharter();
+    const expectedVersion = last ? last.version + 1 : 1;
+    if (sc.charter.version !== expectedVersion) {
+      return res.status(409).json({ error: `Expected charter version ${expectedVersion}, got ${sc.charter.version}` });
+    }
+    if (last && sc.charter.prevCharterSha256 !== last.charterSha256) {
+      return res.status(409).json({ error: 'Charter does not chain to the current charter (prevCharterSha256 mismatch)' });
+    }
+    try {
+      writeCharterFile(CHARTER_PATH, sc);
+      const next: CharterState = { ...charterState, ok: true, problems: [], signed: sc, sha256: charterSha256(sc.charter) };
+      const entry = recordCharter(next, last ? ((last as any).guard as GuardSettings) : null);
+      charterState = next;
+      res.json({ success: true, version: sc.charter.version, charterSha256: next.sha256, ledgerSeq: entry.seq, assessment: entry.data.assessment });
+    } catch (e: any) {
+      sendError(res, e, 'Could not install the charter');
+    }
+  });
+
   // Run ledger: signed head, chain verification, inclusion proofs.
   app.get('/api/ledger/head', (_req: Request, res: Response) => {
     res.json({ success: true, ...runLedger.head(), publicKeyPem: signingKeys.publicKeyPem });
@@ -1131,6 +1276,7 @@ Return JSON: { "passed": boolean, "score": 0-100, "decision": "APPROVED" | "QUAR
         signingKeyEphemeral: signingKeys.ephemeral,
         ledger: { path: runLedger.filePath, size: runLedger.size, ok: v.ok, problems: v.problems },
         drift: driftReport(),
+        charter: { ok: charterState.ok, problems: charterState.problems, version: charterState.signed?.charter.version ?? null },
       })
     );
   });

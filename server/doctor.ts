@@ -24,6 +24,7 @@ export interface DoctorInput {
   signingKeyEphemeral: boolean;
   ledger: { path: string | null; size: number; ok: boolean; problems: string[] };
   drift: { n: number; drifted: boolean; failureRate: number; p0: number; logE: number; threshold: number };
+  charter: { ok: boolean; problems: string[]; version: number | null };
 }
 
 export function diagnose(i: DoctorInput): { status: Severity; findings: Finding[] } {
@@ -50,6 +51,17 @@ export function diagnose(i: DoctorInput): { status: Severity; findings: Finding[
           next: 'set AETHERSHELL_SIGNING_KEY (see .env.example for the generate command)',
         }
       : { check: 'signing-key', severity: 'ok', detail: 'Persistent Ed25519 signing key loaded' }
+  );
+
+  f.push(
+    i.charter.ok
+      ? { check: 'charter', severity: 'ok', detail: `Owner-signed guard charter v${i.charter.version} in force` }
+      : {
+          check: 'charter',
+          severity: 'BLOCK',
+          detail: `Guards are disabled: ${i.charter.problems.join('; ') || 'no valid charter'}`,
+          next: 'npm run owner -- keygen (once, on your machine), set AETHERSHELL_OWNER_PUBLIC_KEY, then npm run owner -- init --key <your key> --reason "..."',
+        }
   );
 
   const publicHost = i.host !== '127.0.0.1' && i.host !== 'localhost' && i.host !== '::1';

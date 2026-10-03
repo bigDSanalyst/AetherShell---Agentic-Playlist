@@ -129,16 +129,18 @@ test('doctor names what blocks and what is degraded', () => {
     signingKeyEphemeral: true,
     ledger: { path: null, size: 0, ok: true, problems: [] },
     drift: { n: 0, drifted: false, failureRate: 0, p0: 0.15, logE: 0, threshold: 4.6 },
+    charter: { ok: false, problems: ['No owner key configured'], version: null },
   });
   assert.equal(r.status, 'BLOCK');
   const by = Object.fromEntries(r.findings.map((f) => [f.check, f.severity]));
-  assert.deepEqual(by, { gemini: 'BLOCK', 'signing-key': 'DEGRADED', access: 'BLOCK', 'youtube-data-api': 'DEGRADED', ledger: 'DEGRADED', drift: 'ok' });
+  assert.deepEqual(by, { gemini: 'BLOCK', 'signing-key': 'DEGRADED', charter: 'BLOCK', access: 'BLOCK', 'youtube-data-api': 'DEGRADED', ledger: 'DEGRADED', drift: 'ok' });
   const ok = diagnose({
     env: { GEMINI_API_KEY: 'x', YOUTUBE_API_KEY: 'y' },
     host: '127.0.0.1',
     signingKeyEphemeral: false,
     ledger: { path: '/x', size: 3, ok: true, problems: [] },
     drift: { n: 3, drifted: false, failureRate: 0, p0: 0.15, logE: 0, threshold: 4.6 },
+    charter: { ok: true, problems: [], version: 1 },
   });
   assert.equal(ok.status, 'ok');
 });
