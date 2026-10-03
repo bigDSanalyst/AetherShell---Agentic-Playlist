@@ -7,6 +7,15 @@
 //                           [--next-owner <fingerprint>] [--out <file>]
 //   npm run owner -- verify --charter data/charter.json [--pub <public key>]
 //
+// The exchange (concerns both ways, answers, single-verdict overrides):
+//   npm run owner -- concerns                                   list open and answered concerns
+//   npm run owner -- raise    --key <k> --topic "..." --body "..."   raise a concern the system must answer
+//   npm run owner -- answer   --key <k> --concern C-12 --decision accepted|declined|noted --reason "..."
+//   npm run owner -- override --seq 34                          step 1: read the system's assessment
+//   npm run owner -- override --key <k> --seq 34 --ack <sha256> --decision accept|reject --reason "..."
+//                                                               step 2: sign, acknowledging that assessment
+// All take [--server http://127.0.0.1:3000]; AETHERSHELL_ACCESS_TOKEN is sent if set.
+//
 // `propose` asks the server for its assessment (which recorded verdicts would
 // flip) before you sign. `sign` writes the next charter version; install it by
 // restarting the server or with: curl -X POST <server>/api/charter -H 'Content-Type: application/json' -d @<file>
@@ -28,6 +37,7 @@ import {
   type GuardSettings,
   type SignedCharter,
 } from '../server/charter';
+import { newOwnerStatement, signOwnerStatement } from '../server/exchange';
 
 const [cmd, ...rest] = process.argv.slice(2);
 const args: Record<string, string[]> = {};
@@ -65,6 +75,16 @@ function parseSets(): Partial<GuardSettings> {
 function readCharter(p: string | undefined): SignedCharter {
   if (!p) die('--charter <file> is required');
   return JSON.parse(fs.readFileSync(p!, 'utf8'));
+}
+
+const server = () => arg('server') ?? 'http://127.0.0.1:3000';
+async function api(method: string, p: string, body?: unknown) {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (process.env.AETHERSHELL_ACCESS_TOKEN) headers['x-aethershell-token'] = process.env.AETHERSHELL_ACCESS_TOKEN;
+  const res = await fetch(`${server()}${p}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  const json: any = await res.json().catch(() => ({}));
+  if (!res.ok) die(`server said (${res.status}): ${json.error || 'error'}`);
+  return json;
 }
 
 async function main() {
@@ -127,8 +147,59 @@ async function main() {
       console.log(ok ? `Charter v${sc.charter.version}: signature verifies` : 'Signature does NOT verify');
       process.exit(ok ? 0 : 1);
     }
+    case 'concerns': {
+      const { concerns, overrides } = await api('GET', '/api/exchange');
+      if (!concerns.length) console.log('No concerns on either side.');
+      for (const c of concerns) {
+        console.log(`\n${c.id}  [${c.status}]  from ${c.from}  ${c.at}\n  topic: ${c.topic}\n  ${String(c.body).replace(/\n/g, '\n  ')}`);
+        for (const a of c.answers) console.log(`  -> ${a.from} ${a.decision}: ${a.reason}`);
+      }
+      if (overrides.length) console.log(`\n${overrides.length} verdict override(s) recorded.`);
+      return;
+    }
+    case 'raise': {
+      const key = loadPrivate(arg('key'));
+      const st = newOwnerStatement('concern', { topic: arg('topic') ?? die('--topic is required'), body: arg('body') ?? die('--body is required') });
+      const out = await api('POST', '/api/exchange/owner', signOwnerStatement(st, key));
+      console.log(`Concern recorded as C-${out.seq}.`);
+      if (out.systemReply?.pending) console.log(`The system has not answered yet: ${out.systemReply.why}`);
+      else if (out.systemReply) console.log(`System (${out.systemReply.decision}): ${out.systemReply.reason}`);
+      return;
+    }
+    case 'answer': {
+      const key = loadPrivate(arg('key'));
+      const st = newOwnerStatement('answer', {
+        concernId: arg('concern') ?? die('--concern C-<n> is required'),
+        decision: arg('decision') ?? die('--decision accepted|declined|noted is required'),
+        reason: arg('reason') ?? die('--reason "..." is required'),
+      });
+      const out = await api('POST', '/api/exchange/owner', signOwnerStatement(st, key));
+      console.log(`Answer recorded (ledger entry ${out.seq}).`);
+      return;
+    }
+    case 'override': {
+      const seq = arg('seq') ?? die('--seq <guard ledger entry> is required');
+      const a = await api('GET', `/api/exchange/override-assessment/${seq}`);
+      if (!arg('ack')) {
+        console.log(`The system's assessment of overriding run ${seq} (${a.assessment.evaluator}, recorded ${a.assessment.recordedVerdict}):\n`);
+        console.log(`  ${a.assessment.summary}`);
+        for (const f of a.assessment.failedChecks) console.log(`   - ${f}`);
+        console.log(`\nTo override, sign this assessment: --ack ${a.assessmentSha256} --key <k> --decision accept|reject --reason "..."`);
+        return;
+      }
+      const key = loadPrivate(arg('key'));
+      const st = newOwnerStatement('override', {
+        guardSeq: Number(seq),
+        acknowledgedAssessmentSha256: arg('ack'),
+        decision: arg('decision') ?? die('--decision accept|reject is required'),
+        reason: arg('reason') ?? die('--reason "..." is required'),
+      });
+      const out = await api('POST', '/api/exchange/owner', signOwnerStatement(st, key));
+      console.log(`Override recorded (ledger entry ${out.seq}).`);
+      return;
+    }
     default:
-      die('commands: keygen | init | propose | sign | verify (see scripts/owner.ts)');
+      die('commands: keygen | init | propose | sign | verify | concerns | raise | answer | override (see scripts/owner.ts)');
   }
 }
 

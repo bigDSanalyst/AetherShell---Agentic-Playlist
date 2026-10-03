@@ -25,6 +25,7 @@ export interface DoctorInput {
   ledger: { path: string | null; size: number; ok: boolean; problems: string[] };
   drift: { n: number; drifted: boolean; failureRate: number; p0: number; logE: number; threshold: number };
   charter: { ok: boolean; problems: string[]; version: number | null };
+  exchange?: { awaitingOwner: number; awaitingSystem: number };
 }
 
 export function diagnose(i: DoctorInput): { status: Severity; findings: Finding[] } {
@@ -64,7 +65,23 @@ export function diagnose(i: DoctorInput): { status: Severity; findings: Finding[
         }
   );
 
-  const publicHost = i.host !== '127.0.0.1' && i.host !== 'localhost' && i.host !== '::1';
+  if (i.exchange) {
+    const { awaitingOwner, awaitingSystem } = i.exchange;
+    f.push(
+      awaitingOwner || awaitingSystem
+        ? {
+            check: 'exchange',
+            severity: 'DEGRADED',
+            detail: `Open concerns: ${awaitingOwner} awaiting your answer, ${awaitingSystem} awaiting the system's`,
+            next: awaitingOwner
+              ? 'npm run owner -- concerns, then npm run owner -- answer --concern <id> ...'
+              : 'POST /api/exchange/system-answer/<id> once the model is available',
+          }
+        : { check: 'exchange', severity: 'ok', detail: 'No open concerns on either side' }
+    );
+  }
+
+    const publicHost = i.host !== '127.0.0.1' && i.host !== 'localhost' && i.host !== '::1';
   if (publicHost && !env.AETHERSHELL_ACCESS_TOKEN) {
     f.push({
       check: 'access',

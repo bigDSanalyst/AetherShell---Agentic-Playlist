@@ -34,6 +34,7 @@ import {
 } from '../types';
 import { importGitHubGuard, executeGitHubGuardAudit, fetchCharterStatus, type CharterStatus } from '../services/api';
 import { runSandboxed } from '../utils/sandbox';
+import { ExchangePanel } from './ExchangePanel';
 
 interface GuardShellProps {
   guardReport: GuardAuditReport | null;
@@ -275,6 +276,8 @@ export function validate(ctx: GuardContext): { passed: boolean; violations: stri
           </span>
         )}
       </div>
+
+      <ExchangePanel refreshKey={`${guardReport?.guardShellTimestamp}-${guardReportBeta?.guardShellTimestamp}`} />
 
       {/* Top Banner: Guard Shell Role & Mission */}
       <div className="rounded-2xl border border-indigo-800/40 bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 p-5 shadow-xl shadow-indigo-950/20 backdrop-blur-sm">
