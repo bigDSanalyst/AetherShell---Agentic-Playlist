@@ -32,7 +32,7 @@ import {
   GitHubGuardAuditResult,
   DualGuardComparisonReport,
 } from '../types';
-import { importGitHubGuard, executeGitHubGuardAudit } from '../services/api';
+import { importGitHubGuard, executeGitHubGuardAudit, fetchCharterStatus, type CharterStatus } from '../services/api';
 import { runSandboxed } from '../utils/sandbox';
 
 interface GuardShellProps {
@@ -74,6 +74,18 @@ export const GuardShell: React.FC<GuardShellProps> = ({
   const [selectedStrictness, setSelectedStrictness] = useState<'HIGH' | 'MAXIMUM' | 'STANDARD'>('HIGH');
   const [isAuditingBeta, setIsAuditingBeta] = useState(false);
   const [isAuditingDual, setIsAuditingDual] = useState(false);
+  const [charterStatus, setCharterStatus] = useState<CharterStatus | null>(null);
+  const [charterError, setCharterError] = useState<string | null>(null);
+
+  // Which owner-signed charter governs the guards (refreshed after each audit).
+  React.useEffect(() => {
+    fetchCharterStatus()
+      .then((c) => {
+        setCharterStatus(c);
+        setCharterError(null);
+      })
+      .catch((e) => setCharterError(e.message));
+  }, [guardReport?.guardShellTimestamp, guardReportBeta?.guardShellTimestamp]);
 
   // GitHub Import State
   const [repoUrl, setRepoUrl] = useState('');
@@ -235,6 +247,35 @@ export function validate(ctx: GuardContext): { passed: boolean; violations: stri
 
   return (
     <div className="space-y-6">
+      {/* Guard charter: the owner-signed settings in force, or why guards are off */}
+      <div
+        className={`rounded-xl border px-4 py-3 font-mono text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
+          charterStatus?.ok ? 'border-emerald-800/60 bg-emerald-950/20 text-emerald-200' : 'border-rose-800/60 bg-rose-950/30 text-rose-200'
+        }`}
+        role="status"
+      >
+        {charterStatus?.ok && charterStatus.charter ? (
+          <>
+            <span>
+              Owner-signed charter v{charterStatus.charter.version} in force · owner key {charterStatus.ownerKeyFingerprint?.slice(0, 12)}… ·
+              words ≥ {Math.round(charterStatus.charter.guard.minWordOverlap * 100)}%, word pairs ≥{' '}
+              {Math.round(charterStatus.charter.guard.minBigramOverlap * 100)}%, model approval{' '}
+              {charterStatus.charter.guard.requireLlmApproval ? 'required' : 'NOT required'}, witness{' '}
+              {charterStatus.charter.guard.requireWitness ? 'required' : 'NOT required'}
+            </span>
+            <span className="text-slate-400 truncate" title={charterStatus.charter.reason}>
+              “{charterStatus.charter.reason}”
+            </span>
+          </>
+        ) : (
+          <span>
+            Guards are disabled:{' '}
+            {charterError || charterStatus?.problems.join('; ') || 'checking charter…'} Only the owner can enable them with a signed charter
+            (npm run owner).
+          </span>
+        )}
+      </div>
+
       {/* Top Banner: Guard Shell Role & Mission */}
       <div className="rounded-2xl border border-indigo-800/40 bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 p-5 shadow-xl shadow-indigo-950/20 backdrop-blur-sm">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">

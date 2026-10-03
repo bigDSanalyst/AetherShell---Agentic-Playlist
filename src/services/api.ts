@@ -398,3 +398,22 @@ export async function fetchSignerPublicKey(): Promise<{ algorithm: string; publi
   }
   return res.json();
 }
+
+export interface CharterStatus {
+  ok: boolean;
+  problems: string[];
+  charter: null | {
+    version: number;
+    issuedAt: string;
+    reason: string;
+    guard: { minWordOverlap: number; minBigramOverlap: number; requireLlmApproval: boolean; requireWitness: boolean; reviewModels: string[] };
+  };
+  charterSha256: string | null;
+  ownerKeyFingerprint: string | null;
+}
+
+export async function fetchCharterStatus(): Promise<CharterStatus> {
+  const res = await apiFetch('/api/charter');
+  if (!res.ok) throw new Error('Failed to read the guard charter');
+  return res.json();
+}

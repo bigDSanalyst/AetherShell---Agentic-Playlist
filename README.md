@@ -22,6 +22,7 @@ and check the logic against the transcript before it is accepted
 | Playlist listing | With `YOUTUBE_API_KEY`: YouTube Data API (also gives upload dates). Without it: the playlist page is read for ids/titles/durations (best effort; YouTube may change that markup). |
 | Video cards | Thumbnail from `i.ytimg.com/vi/<id>/mqdefault.jpg`, duration, and upload date. Upload dates need `YOUTUBE_API_KEY`; otherwise the card says "unknown". |
 | Playlist export | Output Hub → "Export Playlist JSON": every video's signed manifest, DEFLATE-compressed transcript, and the exact logic signed with it, plus the signer's public key. The file re-checks each logic hash; videos not yet signed are listed as `not_signed`. |
+| Guard charter (owner authority) | Every guard setting (grounding thresholds, whether model approval and the independent witness are required, which models may review) is in a charter signed with the **owner's** Ed25519 key, which never leaves the owner's machine. Without a valid charter the guards do not run; no environment variable can change a guard setting. Charters are versioned and chained, so a rollback, a fork, a skipped version or a hand edit is refused. Before signing a change, `npm run owner -- propose` asks the server for its assessment: what loosens, and which recorded verdicts would flip. Every accepted charter is entered in the run ledger with that assessment. A new owner key is accepted only if the previous key named it in a signed charter. |
 | Run ledger | Every signing and every guard verdict the server produces is appended to `data/ledger.jsonl`: hash-chained, digests only. `GET /api/ledger/head` returns a signed head (size + Merkle root), `/api/ledger/proof/:seq` an inclusion proof, `/api/ledger/verify` the chain check. A ledger that fails verification on load is reported and not appended to. Ported from Dharmapala's run records. |
 | Drift monitor | An anytime-valid e-process (from Dharmapala's `eprocess.py`) over guard failures in the ledger flags a failure rate credibly above `DRIFT_P0` (default 15%) at false-alarm level `DRIFT_ALPHA` (default 0.01). Runs where the model was unavailable are left out. |
 | Doctor | `npm run doctor` (or `GET /api/doctor`) reports which layers are actually running: `ok`, `DEGRADED`, or `BLOCK`, each with the fix. Pattern from syndicate-genesis. |
@@ -35,6 +36,7 @@ cp .env.example .env   # set GEMINI_API_KEY at least
 npm run dev            # http://127.0.0.1:3000
 ```
 
+* `npm run owner -- keygen`, then `npm run owner -- init --key <key> --reason "..."`: set up your owner key and first guard charter (guards stay off until you do).
 * `npm run doctor`: what is configured and what is degraded, before you trust a run.
 * `npm test`: unit tests (signing/verification, tamper cases, URL validation, caption grouping, grounding).
 * `npm run lint`: TypeScript check.

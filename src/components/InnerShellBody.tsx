@@ -85,8 +85,12 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
         outcome = activeVideo?.watermark?.manifest?.logicSha256 && activeVideo?.watermark?.signature ? 'PASS' : 'FAIL';
         break;
       case 'grounding-threshold': {
-        const limit = 1 - (rclAnalysis?.ssiInjectedState?.invariantTolerances?.driftThreshold ?? 0.5);
-        outcome = typeof rclAnalysis?.groundingScore === 'number' && rclAnalysis.groundingScore >= limit ? 'PASS' : 'FAIL';
+        const dt = rclAnalysis?.ssiInjectedState?.invariantTolerances?.driftThreshold;
+        if (typeof dt !== 'number') {
+          outcome = 'N/A'; // no owner-signed charter: no threshold to check against
+          break;
+        }
+        outcome = typeof rclAnalysis?.groundingScore === 'number' && rclAnalysis.groundingScore >= 1 - dt ? 'PASS' : 'FAIL';
         break;
       }
       default:
@@ -406,7 +410,7 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
                 <div className="flex items-center justify-between text-[11px] border-b border-slate-800/80 pb-1.5">
                   <span className="text-slate-400">Drift Tolerance Limit:</span>
                   <span className="text-amber-400">
-                    {rclAnalysis.ssiInjectedState.invariantTolerances?.driftThreshold ?? '0.05'}
+                    {rclAnalysis.ssiInjectedState.invariantTolerances?.driftThreshold ?? 'no charter'}
                   </span>
                 </div>
                 <div className="text-[11px] pt-1">
