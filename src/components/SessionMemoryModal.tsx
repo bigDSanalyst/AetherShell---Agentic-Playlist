@@ -33,8 +33,10 @@ export const SessionMemoryModal: React.FC<SessionMemoryModalProps> = ({
   const [newKey, setNewKey] = useState('');
   const [newValue, setNewValue] = useState('');
   const [copySuccess, setCopySuccess] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
-  const lattice = sessionMemory.memoryLattice || {};
+  const lattice = sessionMemory?.memoryLattice || {};
 
   const handleAddKey = (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,7 +63,7 @@ export const SessionMemoryModal: React.FC<SessionMemoryModalProps> = ({
     const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(sessionMemory, null, 2));
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `aethershell-memory-${sessionMemory.sessionId.slice(0, 8)}.json`);
+    downloadAnchor.setAttribute('download', `aethershell-memory-${(sessionMemory?.sessionId || 'session').slice(0, 8)}.json`);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
@@ -72,15 +74,18 @@ export const SessionMemoryModal: React.FC<SessionMemoryModalProps> = ({
   const handleImportJson = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    setImportError(null);
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
         const parsed = JSON.parse(event.target?.result as string);
         if (parsed.memoryLattice) {
           onUpdateMemory(parsed.memoryLattice);
+        } else {
+          setImportError('File format valid JSON, but missing memoryLattice property.');
         }
-      } catch (err) {
-        alert('Invalid session memory JSON file.');
+      } catch {
+        setImportError('Invalid session memory JSON file. Please provide a valid JSON export.');
       }
     };
     reader.readAsText(file);
@@ -133,6 +138,13 @@ export const SessionMemoryModal: React.FC<SessionMemoryModalProps> = ({
             </div>
           </div>
         </div>
+
+        {importError && (
+          <div className="p-3 rounded-xl bg-rose-950/80 border border-rose-700/60 text-xs font-mono text-rose-300 flex items-center justify-between">
+            <span>{importError}</span>
+            <button onClick={() => setImportError(null)} className="text-slate-400 hover:text-slate-200 px-1">✕</button>
+          </div>
+        )}
 
         {/* Memory Keys Table */}
         <div className="space-y-3">
@@ -225,17 +237,34 @@ export const SessionMemoryModal: React.FC<SessionMemoryModalProps> = ({
             </label>
           </div>
 
-          <button
-            onClick={() => {
-              if (confirm('Reset entire session memory lattice?')) {
-                onResetSession();
-              }
-            }}
-            className="px-3 py-2 rounded-lg bg-rose-950/60 hover:bg-rose-900 text-rose-300 text-xs font-mono flex items-center gap-1.5 transition-colors"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset Session</span>
-          </button>
+          {showResetConfirm ? (
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-rose-400 font-mono">Reset lattice?</span>
+              <button
+                onClick={() => {
+                  setShowResetConfirm(false);
+                  onResetSession();
+                }}
+                className="px-2.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-mono text-xs font-bold transition-colors"
+              >
+                Yes, Reset
+              </button>
+              <button
+                onClick={() => setShowResetConfirm(false)}
+                className="px-2 py-1.5 rounded-lg bg-slate-850 hover:bg-slate-800 text-slate-300 font-mono text-xs transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowResetConfirm(true)}
+              className="px-3 py-2 rounded-lg bg-rose-950/60 hover:bg-rose-900 text-rose-300 text-xs font-mono flex items-center gap-1.5 transition-colors"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset Session</span>
+            </button>
+          )}
         </div>
       </div>
     </div>

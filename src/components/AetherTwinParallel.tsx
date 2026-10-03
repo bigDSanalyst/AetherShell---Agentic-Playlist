@@ -376,18 +376,18 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
       const newRecord: TwinLogicStateRecord = {
         id: `STATE-LIVE-${Date.now().toString(36).toUpperCase()}`,
         timestamp: Date.now(),
-        videoTitle: sessionMemory.memoryLattice.activeVideoTitle || 'YouTube Session Ingestion',
+        videoTitle: sessionMemory?.memoryLattice?.activeVideoTitle || 'YouTube Session Ingestion',
         logicId: innershellLogic.logicId,
         summary: innershellLogic.summary || 'Live Innershell synthesized logic execution.',
         classification,
         rclIterationCount: activeRclIterations,
         semanticDistanceDelta: delta,
         epsilonThreshold: eps,
-        alignmentScore: guardReport.semanticAudit.alignmentScore ?? 95,
+        alignmentScore: guardReport?.semanticAudit?.alignmentScore ?? 95,
         lyapunovResidual: lyapunov,
-        channelParityPassed: guardReport.watermarkSignatureStatus === 'VERIFIED',
-        quarantineReasons: guardReport.semanticAudit.boundaryDecision !== 'APPROVED'
-          ? [guardReport.semanticAudit.reasoning || 'Invariant drift triggered quarantine.']
+        channelParityPassed: guardReport?.watermarkSignatureStatus === 'VERIFIED',
+        quarantineReasons: guardReport?.semanticAudit?.boundaryDecision !== 'APPROVED'
+          ? [guardReport?.semanticAudit?.reasoning || 'Invariant drift triggered quarantine.']
           : undefined,
       };
 
@@ -605,32 +605,34 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
     const drifted = displayedTrendRuns.filter((r) => r.classification !== 'SUCCESSFUL');
 
     const successfulRunsMean = successful.length > 0
-      ? Number((successful.reduce((a, b) => a + b.semanticDistanceDelta, 0) / successful.length).toFixed(4))
+      ? Number((successful.reduce((a, b) => a + (b.semanticDistanceDelta ?? 0.012), 0) / successful.length).toFixed(4))
       : 0.012;
 
     const driftedRunsMean = drifted.length > 0
-      ? Number((drifted.reduce((a, b) => a + b.semanticDistanceDelta, 0) / drifted.length).toFixed(4))
+      ? Number((drifted.reduce((a, b) => a + (b.semanticDistanceDelta ?? 0.075), 0) / drifted.length).toFixed(4))
       : 0.075;
 
     // Compare early window (first 35%) vs recent window (last 35%)
-    const splitCount = Math.max(2, Math.floor(total * 0.35));
+    const splitCount = Math.max(1, Math.floor(total * 0.35));
     const early = displayedTrendRuns.slice(0, splitCount);
     const recent = displayedTrendRuns.slice(-splitCount);
 
-    const earlyMean = early.reduce((a, b) => a + b.semanticDistanceDelta, 0) / early.length;
-    const recentMean = recent.reduce((a, b) => a + b.semanticDistanceDelta, 0) / recent.length;
+    const earlyMean = early.length > 0 ? early.reduce((a, b) => a + (b.semanticDistanceDelta ?? 0.05), 0) / early.length : 0.05;
+    const recentMean = recent.length > 0 ? recent.reduce((a, b) => a + (b.semanticDistanceDelta ?? 0.012), 0) / recent.length : 0.012;
 
     const decayPercent = earlyMean > 0
       ? Number((((recentMean - earlyMean) / earlyMean) * 100).toFixed(1))
       : 0;
 
     // Variance / Standard Deviation of recent runs
-    const recentVariance = recent.reduce((acc, r) => acc + Math.pow(r.semanticDistanceDelta - recentMean, 2), 0) / recent.length;
-    const varianceStdDev = Number(Math.sqrt(recentVariance).toFixed(4));
+    const recentVariance = recent.length > 0
+      ? recent.reduce((acc, r) => acc + Math.pow((r.semanticDistanceDelta ?? recentMean) - recentMean, 2), 0) / recent.length
+      : 0;
+    const varianceStdDev = Number(Math.sqrt(Math.max(0, recentVariance)).toFixed(4));
 
     // Success rate in recent window
     const recentSuccessCount = recent.filter((r) => r.classification === 'SUCCESSFUL').length;
-    const successRateRecent = Math.round((recentSuccessCount / recent.length) * 100);
+    const successRateRecent = recent.length > 0 ? Math.round((recentSuccessCount / recent.length) * 100) : 100;
 
     let stabilizationStatus: 'STABILIZED' | 'CONVERGING' | 'OSCILLATING' = 'STABILIZED';
     if (recentMean <= 0.025 && varianceStdDev <= 0.018 && successRateRecent >= 85) {

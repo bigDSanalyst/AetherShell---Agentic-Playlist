@@ -27,7 +27,13 @@ interface PlaylistIngestionProps {
   setActiveVideo: (video: VideoNode) => void;
   onLoadCurated: (id: string) => void;
   onIngestUrl: (url: string) => void;
-  onDeepTranscribe: (video: VideoNode) => void;
+  onDeepTranscribe: (video?: VideoNode) => void;
+  transcribeProgress?: {
+    current: number;
+    total: number;
+    currentTitle: string;
+    percent: number;
+  } | null;
   isLoading: boolean;
   onProceedToInnershell: () => void;
   onProceedToKnowledge: () => void;
@@ -41,6 +47,7 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
   onLoadCurated,
   onIngestUrl,
   onDeepTranscribe,
+  transcribeProgress,
   isLoading,
   onProceedToInnershell,
   onProceedToKnowledge,
@@ -55,17 +62,47 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
     onIngestUrl(inputUrl.trim());
   };
 
-  const handleCopyTranscript = () => {
+  const handleCopyTranscript = async () => {
     if (!activeVideo?.rawTranscript) return;
-    navigator.clipboard.writeText(activeVideo.rawTranscript);
-    setCopiedTranscript(true);
-    setTimeout(() => setCopiedTranscript(false), 2000);
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(activeVideo.rawTranscript);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = activeVideo.rawTranscript;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopiedTranscript(true);
+      setTimeout(() => setCopiedTranscript(false), 2000);
+    } catch {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = activeVideo.rawTranscript;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        setCopiedTranscript(true);
+        setTimeout(() => setCopiedTranscript(false), 2000);
+      } catch (err) {
+        console.warn('Clipboard copy prevented:', err);
+      }
+    }
   };
 
   const filteredVideos = (playlist?.videos || []).filter(
     (v) =>
-      v.title.toLowerCase().includes(filterQuery.toLowerCase()) ||
-      v.channel.toLowerCase().includes(filterQuery.toLowerCase())
+      (v?.title || '').toLowerCase().includes(filterQuery.toLowerCase()) ||
+      (v?.channel || '').toLowerCase().includes(filterQuery.toLowerCase())
   );
 
   return (
@@ -92,7 +129,7 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
           {/* Curated Quick-Load Presets */}
           <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
             <span className="text-xs font-mono text-cyan-400 font-medium">Curated Presets:</span>
-            {curatedPlaylists.map((cp) => (
+            {(curatedPlaylists || []).map((cp) => (
               <button
                 key={cp.id}
                 onClick={() => onLoadCurated(cp.id)}
@@ -115,7 +152,7 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
               type="text"
               value={inputUrl}
               onChange={(e) => setInputUrl(e.target.value)}
-              placeholder="Paste YouTube Playlist URL (e.g., https://www.youtube.com/playlist?list=...) or Video link"
+              placeholder="Paste YouTube Playlist URL (e.g., https://www.youtube.com/playlist?list=PLHLzviV6Lxzc...)"
               className="w-full pl-10 pr-4 py-2.5 bg-slate-900/90 border border-slate-700/80 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 font-mono transition-colors"
             />
           </div>
@@ -138,6 +175,24 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
           </button>
         </form>
 
+        {/* Quick URL shortcut helper */}
+        <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+          <span className="font-mono text-slate-500">Target Playlist:</span>
+          <button
+            type="button"
+            onClick={() => {
+              const url = 'https://youtube.com/playlist?list=PLHLzviV6Lxzc&si=IKm_ynM7XY889KVU';
+              setInputUrl(url);
+              onIngestUrl(url);
+            }}
+            disabled={isLoading}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-cyan-950/40 hover:bg-cyan-900/60 border border-cyan-800/40 text-cyan-300 transition-all font-mono hover:underline disabled:opacity-50"
+          >
+            <Youtube className="w-3.5 h-3.5 text-red-400" />
+            <span>Load PLHLzviV6Lxzc (AetherShell: IMO AI & Entropy)</span>
+          </button>
+        </div>
+
         {playlist && (
           <div className="mt-4 pt-3 border-t border-slate-800/60 flex flex-wrap items-center justify-between text-xs text-slate-400">
             <div className="flex items-center gap-3">
@@ -145,15 +200,61 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
               <span className="text-slate-500">•</span>
               <span>{playlist.videos.length} Videos Loaded</span>
             </div>
-            <a
-              href={playlist.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-cyan-400 hover:text-cyan-300 font-mono text-[11px]"
-            >
-              <span>Source URL</span>
-              <ExternalLink className="w-3 h-3" />
-            </a>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => onDeepTranscribe()}
+                disabled={isLoading}
+                className="px-3 py-1 rounded-lg bg-gradient-to-r from-cyan-500/20 to-blue-500/20 hover:from-cyan-500/30 hover:to-blue-500/30 border border-cyan-500/40 text-cyan-300 font-mono text-[11px] flex items-center gap-1.5 transition-all disabled:opacity-50"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Bulk Transcribe All Videos</span>
+              </button>
+              <a
+                href={playlist.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-cyan-400 hover:text-cyan-300 font-mono text-[11px]"
+              >
+                <span>Source URL</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+          </div>
+        )}
+
+        {/* Bulk Processing Progress Indicator */}
+        {transcribeProgress && (
+          <div className="mt-4 p-4 rounded-xl bg-gradient-to-r from-cyan-950/90 via-slate-900/90 to-blue-950/90 border border-cyan-500/40 shadow-xl shadow-cyan-950/30 space-y-2.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs font-mono">
+              <div className="flex items-center gap-2 text-cyan-300">
+                <span className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></span>
+                <span className="font-semibold uppercase tracking-wider">
+                  Bulk Ingesting & Transcribing Playlist
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded bg-cyan-900/70 border border-cyan-700/60 text-cyan-200 font-bold">
+                  {transcribeProgress.current} / {transcribeProgress.total} Videos
+                </span>
+                <span className="text-cyan-400 font-bold">{transcribeProgress.percent}%</span>
+              </div>
+            </div>
+
+            {/* Visual Animated Progress Bar */}
+            <div className="w-full h-2.5 rounded-full bg-slate-950 border border-slate-800 overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-cyan-500 via-sky-400 to-blue-500 transition-all duration-300 ease-out"
+                style={{ width: `${Math.max(4, transcribeProgress.percent)}%` }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
+              <span className="truncate max-w-[85%] text-slate-300">
+                Active Video: <span className="text-cyan-300 font-medium">{transcribeProgress.currentTitle}</span>
+              </span>
+              <span className="text-cyan-400 font-semibold">{transcribeProgress.percent}% Complete</span>
+            </div>
           </div>
         )}
       </div>
@@ -164,11 +265,23 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
           {/* Left Column: Playlist Video Nodes (4 cols) */}
           <div className="lg:col-span-5 space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-mono uppercase tracking-wider text-slate-400 font-semibold flex items-center gap-2">
-                <Play className="w-3.5 h-3.5 text-cyan-400" />
-                Playlist Nodes ({filteredVideos.length})
-              </h3>
-              <div className="relative w-44">
+              <div className="flex items-center gap-2">
+                <h3 className="text-xs font-mono uppercase tracking-wider text-slate-400 font-semibold flex items-center gap-1.5">
+                  <Play className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Nodes ({filteredVideos.length})</span>
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => onDeepTranscribe()}
+                  disabled={isLoading}
+                  className="px-2 py-0.5 rounded bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-800/60 text-cyan-300 text-[10px] font-mono flex items-center gap-1 transition-all disabled:opacity-50"
+                  title="Bulk transcribe all videos in playlist"
+                >
+                  <Sparkles className="w-3 h-3 text-cyan-400" />
+                  <span>Bulk All</span>
+                </button>
+              </div>
+              <div className="relative w-36 sm:w-44">
                 <Search className="w-3 h-3 text-slate-500 absolute left-2.5 top-2.5" />
                 <input
                   type="text"
@@ -271,11 +384,20 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
                     <button
                       onClick={() => onDeepTranscribe(activeVideo)}
                       disabled={isLoading}
-                      className="px-3 py-1.5 rounded-lg bg-cyan-950 hover:bg-cyan-900 border border-cyan-700/60 text-cyan-300 text-xs font-mono flex items-center gap-1.5 transition-colors disabled:opacity-50"
-                      title="Re-run deep transcription with timestamps"
+                      className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-cyan-950 to-blue-950 hover:from-cyan-900 hover:to-blue-900 border border-cyan-600/60 text-cyan-300 text-xs font-mono flex items-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 shadow-sm"
+                      title="Bulk transcribe all videos in playlist with Gemini"
                     >
-                      <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>Transcribe with Gemini</span>
+                      {transcribeProgress ? (
+                        <>
+                          <span className="w-3.5 h-3.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                          <span>Processing ({transcribeProgress.current}/{transcribeProgress.total})...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                          <span>Bulk Transcribe Playlist</span>
+                        </>
+                      )}
                     </button>
 
                     <button

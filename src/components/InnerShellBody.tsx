@@ -20,6 +20,7 @@ import {
   Award,
   Copy,
   Download,
+  Check,
 } from 'lucide-react';
 import {
   InnershellLogic,
@@ -62,18 +63,20 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
   const [customScriptCode, setCustomScriptCode] = useState<string>('');
   const [testedInvariants, setTestedInvariants] = useState<Record<string, boolean>>({});
 
+  const [copiedScript, setCopiedScript] = useState(false);
+
   // Sync rclIterations if optimal count applied from AetherTwin
   React.useEffect(() => {
-    if (sessionMemory.memoryLattice?.optimalRclIterations) {
+    if (sessionMemory?.memoryLattice?.optimalRclIterations) {
       setRclIterations(sessionMemory.memoryLattice.optimalRclIterations);
     }
-  }, [sessionMemory.memoryLattice?.optimalRclIterations]);
+  }, [sessionMemory?.memoryLattice?.optimalRclIterations]);
 
   const handleTestInvariant = (inv: SotaReflexiveInvariant) => {
     try {
-      const runner = new Function('ctx', inv.runtimeAssertionCode);
+      const runner = new Function('ctx', inv.runtimeAssertionCode || 'return true;');
       const passed = runner({
-        memory: sessionMemory.memoryLattice,
+        memory: sessionMemory?.memoryLattice || {},
         ssiState: rclAnalysis?.ssiInjectedState || {},
         transcriptHash: activeVideo?.watermark?.transcriptHash || 'HASH_OK',
       });
@@ -414,14 +417,31 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
                 {customScriptCode && (
                   <>
                     <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(customScriptCode);
+                      onClick={async () => {
+                        try {
+                          if (navigator?.clipboard?.writeText) {
+                            await navigator.clipboard.writeText(customScriptCode);
+                          } else {
+                            const ta = document.createElement('textarea');
+                            ta.value = customScriptCode;
+                            ta.style.position = 'fixed';
+                            ta.style.opacity = '0';
+                            document.body.appendChild(ta);
+                            ta.select();
+                            document.execCommand('copy');
+                            document.body.removeChild(ta);
+                          }
+                          setCopiedScript(true);
+                          setTimeout(() => setCopiedScript(false), 2000);
+                        } catch (err) {
+                          console.warn('Script copy prevented:', err);
+                        }
                       }}
                       className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-xs flex items-center gap-1 transition-colors"
                       title="Copy synthesized script to clipboard"
                     >
-                      <Copy className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Copy</span>
+                      {copiedScript ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span className="hidden sm:inline">{copiedScript ? 'Copied' : 'Copy'}</span>
                     </button>
                     <button
                       onClick={() => {

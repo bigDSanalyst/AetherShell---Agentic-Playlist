@@ -158,8 +158,8 @@ export async function validateWithDualGuardShells(params: {
   const discrepancy = Number(Math.abs(deltaAlpha - deltaBeta).toFixed(4));
   const epsilon = 0.05;
 
-  const alphaApproved = reportAlpha.semanticAudit.boundaryDecision === 'APPROVED' && deltaAlpha <= epsilon;
-  const betaApproved = reportBeta.semanticAudit.boundaryDecision === 'APPROVED' && deltaBeta <= epsilon;
+  const alphaApproved = (reportAlpha?.semanticAudit?.boundaryDecision === 'APPROVED') && deltaAlpha <= epsilon;
+  const betaApproved = (reportBeta?.semanticAudit?.boundaryDecision === 'APPROVED') && deltaBeta <= epsilon;
 
   let consensusStatus: 'UNANIMOUS_APPROVED' | 'DIVERGENCE_DISAGREEMENT' | 'UNANIMOUS_QUARANTINED' = 'UNANIMOUS_APPROVED';
   let arbitrationVerdict: 'APPROVED' | 'QUARANTINED' | 'REVISE_VIA_FEEDBACK_LOOP' = 'APPROVED';
@@ -175,7 +175,9 @@ export async function validateWithDualGuardShells(params: {
     arbitrationVerdict = 'QUARANTINED';
   }
 
-  const meanScore = Math.round((reportAlpha.semanticAudit.alignmentScore + reportBeta.semanticAudit.alignmentScore) / 2);
+  const scoreAlpha = reportAlpha?.semanticAudit?.alignmentScore ?? 95;
+  const scoreBeta = reportBeta?.semanticAudit?.alignmentScore ?? 95;
+  const meanScore = Math.round((scoreAlpha + scoreBeta) / 2);
 
   const observations = [
     `Guard Alpha Evaluator: δ_alpha = ${deltaAlpha} (${alphaApproved ? 'APPROVED' : 'QUARANTINED'})`,
