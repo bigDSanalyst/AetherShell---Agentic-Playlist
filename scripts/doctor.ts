@@ -13,6 +13,7 @@ import { loadCharterState, type LedgerCharterRecord } from '../server/charter';
 import { concerns } from '../server/exchange';
 import { LearningStore } from '../server/learning';
 import { GeminiUsage } from '../server/geminiUsage';
+import { modelCascade, modelStatus } from '../server/models';
 
 dotenv.config({ quiet: true } as any);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -39,12 +40,10 @@ const result = diagnose({
     const cs = concerns(ledger.all() as any);
     return { awaitingOwner: cs.filter((c) => c.status === 'awaiting-owner').length, awaitingSystem: cs.filter((c) => c.status === 'awaiting-system').length };
   })(),
+  models: modelStatus(process.env, modelCascade(process.env), charter.signed?.charter.guard.reviewModels ?? null),
   geminiQuota: (() => {
     const usagePath = process.env.AETHERSHELL_USAGE_PATH ?? (ledgerPath ? path.join(path.dirname(ledgerPath), 'gemini-usage.json') : '');
-    const models = (process.env.GEMINI_MODELS || 'gemini-3.1-flash-lite,gemini-flash-latest,gemini-3.8-flash,gemini-3.1-pro-preview')
-      .split(',')
-      .map((m) => m.trim())
-      .filter(Boolean);
+    const models = modelCascade(process.env);
     return new GeminiUsage(usagePath || null).report([...new Set([...models, ...(charter.signed?.charter.guard.reviewModels ?? [])])], null);
   })(),
   learning: (() => {

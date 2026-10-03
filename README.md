@@ -55,6 +55,26 @@ flowchart LR
 
 Only the owner's key changes the charter. Everything else reads the ledger; nothing rewrites it.
 
+## Models: Gemini, hosted, or open-source on your own GPU
+
+Every model is named `provider:model` and set with `AETHERSHELL_MODELS`, tried in order:
+
+| Provider | Set | Example model name |
+| --- | --- | --- |
+| Gemini | `GEMINI_API_KEY` | `gemini-flash-latest` (no prefix needed) |
+| Local, open source (Ollama, llama.cpp, vLLM, LM Studio) | `LOCAL_LLM_BASE_URL`, e.g. `http://127.0.0.1:11434/v1` | `local:qwen3:8b`, `local:gemma3:12b` |
+| OpenRouter (hosted open models) | `OPENROUTER_API_KEY` | `openrouter:qwen/qwen3-8b:free` |
+| OpenAI or compatible | `OPENAI_API_KEY` (+ `OPENAI_BASE_URL`) | `openai:gpt-4.1-mini` |
+
+Models of a provider that is not set up are skipped; `doctor` lists what can be
+called. **The guard reviewers are the owner's choice**: they are the signed
+charter's `reviewModels`, not this setting. With a local model and a charter that
+still names Gemini reviewers, synthesis runs but the guards fail closed and
+`doctor` says `BLOCK guard-review` until the owner signs a charter naming models
+the server can call (`npm run owner -- propose / sign --set reviewModels=local:gemma3:12b`).
+Prefer a different model family for review than for synthesis, so the reviewer
+does not share the writer's blind spots. Voice input still uses Gemini's audio model.
+
 ## Proving when: Bitcoin-anchored timestamps
 
 `npm run anchor -- run` records a manifest of the current commit (git HEAD and
