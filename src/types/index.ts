@@ -47,7 +47,6 @@ export interface VideoNode {
   title: string;
   channel: string;
   duration: string;
-  uploadDate?: string;
   url: string;
   rawTranscript?: string;
   segments?: TranscriptSegment[];
