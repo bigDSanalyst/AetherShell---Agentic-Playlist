@@ -42,7 +42,8 @@ Run lint and tests before every commit.
 4. **The run ledger is evidence.** `data/ledger.jsonl` (or
    `AETHERSHELL_LEDGER_PATH`) is append-only and hash-chained. Never edit,
    reorder or "clean up" entries. If it fails verification, report it; move
-   it aside to start a new chain rather than editing it.
+   it aside to start a new chain rather than editing it. The same holds for
+   `anchors/` (the OpenTimestamps record): add to it only with `npm run anchor`.
 5. **Demo data is labelled.** `server/demoPlaylists.ts` DEMO playlists are
    synthetic and must stay marked `[DEMO]`. Presets list real video ids only.
 
@@ -64,3 +65,4 @@ Run lint and tests before every commit.
 | Playlist JSON export | `src/utils/playlistExport.ts` |
 | Gemini usage / quota tracking | `server/geminiUsage.ts`, `src/components/DashboardWidget.tsx` |
 | Work snapshots (download / restore) | `src/utils/snapshot.ts`, `src/components/SessionMemoryModal.tsx` |
+| Bitcoin-anchored timestamps (OpenTimestamps) | `scripts/anchor.ts`, `anchors/` |

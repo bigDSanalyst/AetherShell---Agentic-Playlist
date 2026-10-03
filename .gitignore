@@ -9,3 +9,6 @@ coverage/
 
 # run ledger (append-only record; keep it, but not in git)
 data/
+
+# ots upgrade leaves a backup of the pre-upgrade proof
+*.ots.bak

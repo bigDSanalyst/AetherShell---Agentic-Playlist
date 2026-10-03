@@ -45,7 +45,14 @@ These are in [CLAUDE.md](CLAUDE.md); a change that breaks one will not be merged
   or changes the charter.
 - Never commit keys. `.env`, the owner private key, and the server signing key
   stay out of the repository. The owner key never goes on a server.
+- `anchors/` is a hash-chained record of Bitcoin-anchored timestamps. Never
+  edit, reorder or delete its files; add to it only with `npm run anchor`.
 - Do not hand-edit lockfiles; regenerate them with `npm install` / `bun install`.
+
+## Licence of contributions
+
+AetherShell is licensed under AGPL-3.0-only. By contributing, you agree that your
+contribution is licensed under the same terms.
 
 ## Where things are
 

@@ -2,6 +2,8 @@
   "name": "aethershell",
   "private": true,
   "version": "0.0.0",
+  "license": "AGPL-3.0-only",
+  "author": "Nicholas Clifford Maino",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -12,7 +14,8 @@
     "lint": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
     "doctor": "tsx scripts/doctor.ts",
-    "owner": "tsx scripts/owner.ts"
+    "owner": "tsx scripts/owner.ts",
+    "anchor": "tsx scripts/anchor.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
