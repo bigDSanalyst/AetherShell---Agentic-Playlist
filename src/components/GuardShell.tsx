@@ -464,6 +464,19 @@ export function validate(ctx: GuardContext): { passed: boolean; violations: stri
                       </div>
                     </div>
                     <p className="text-[11px] text-slate-400 font-sans leading-relaxed">{report.semanticAudit.reasoning}</p>
+                    {report.witness && (
+                      <p
+                        className={`text-[10px] font-mono ${report.witness.verified && report.witness.agreesWithPrimary ? 'text-emerald-300' : 'text-rose-300'}`}
+                        title="A second, separately written verifier; any disagreement with the primary check is a refusal"
+                      >
+                        Independent witness:{' '}
+                        {!report.witness.agreesWithPrimary
+                          ? `DISAGREES with primary (${report.witness.disagreements.join('; ')})`
+                          : report.witness.verified
+                          ? 'verified, agrees with primary'
+                          : 'rejects, agrees with primary'}
+                      </p>
+                    )}
                     {(report.provenanceFailures?.length ?? 0) > 0 && (
                       <ul className="text-[10px] text-rose-300 list-disc pl-4 space-y-0.5">
                         {report.provenanceFailures!.map((f) => (

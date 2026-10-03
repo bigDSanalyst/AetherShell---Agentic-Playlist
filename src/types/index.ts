@@ -177,6 +177,18 @@ export interface GuardAuditReport {
     signerKeyFingerprint?: string;
   };
   provenanceFailures?: string[];
+  // Guard Beta only: reading by the independent witness implementation.
+  witness?: {
+    signatureValid: boolean;
+    transcriptHashMatch: boolean;
+    logicHashMatch: boolean;
+    watermarkIdMatch: boolean;
+    decompressionMatch: boolean;
+    verified: boolean;
+    reasons: string[];
+    agreesWithPrimary: boolean;
+    disagreements: string[];
+  } | null;
   llmAvailable?: boolean;
   evaluatorId?: string;
   semanticAudit: {

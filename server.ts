@@ -15,10 +15,11 @@ import {
   mapWithConcurrency,
   parseYouTubeUrl,
 } from './server/youtube';
-import { hashLogic, hashTranscript, loadSigningKeys, verifyProvenance, watermarkAndCompress } from './server/provenance';
+import { MalformedTextError, hashLogic, hashTranscript, loadSigningKeys, verifyProvenance, watermarkAndCompress } from './server/provenance';
 import { bigramOverlap, changeBetween, contentTokens, logicClaimText, round4, wordOverlap } from './server/grounding';
 import { resolveGitHubFile } from './server/github';
 import { parseModelJson } from './server/modelJson';
+import { compareWithPrimary, witnessRead } from './server/witness';
 import { RunLedger, type LedgerEntry } from './server/runLedger';
 import { ledgerDrift } from './server/eprocess';
 import { diagnose } from './server/doctor';
@@ -193,6 +194,22 @@ async function runGuardShell(evaluator: Evaluator, body: any) {
 
   const provenance = verifyProvenance(signingKeys, { directTranscript, innershellLogic, watermark, compressedRecord });
 
+  // Guard Beta does not trust that implementation alone: it reads the same
+  // claim with server/witness.ts, which shares no code with provenance.ts.
+  // Beta's channel check passes only if the witness verifies everything AND
+  // agrees with the primary reading field by field; any disagreement means
+  // one implementation is wrong, so it is a refusal.
+  let witness: null | (ReturnType<typeof witnessRead> & { agreesWithPrimary: boolean; disagreements: string[] }) = null;
+  if (evaluator === 'beta') {
+    const w = witnessRead(signingKeys.publicKeyPem, { directTranscript, innershellLogic, watermark, compressedRecord });
+    const d = provenance.cryptographicDetails;
+    const cmp = compareWithPrimary(
+      { signatureValid: d.signatureValid, transcriptHashMatch: d.transcriptHashMatch, logicHashMatch: d.logicHashMatch, decompression: provenance.decompressionStatus },
+      w
+    );
+    witness = { ...w, ...cmp };
+  }
+
   const claimText = logicClaimText(innershellLogic);
   const ov = evaluator === 'alpha' ? wordOverlap(claimText, directTranscript) : bigramOverlap(claimText, directTranscript);
   const minOverlap = evaluator === 'alpha' ? MIN_WORD_OVERLAP : MIN_BIGRAM_OVERLAP;
@@ -278,6 +295,17 @@ Return JSON:
       status: provenance.watermarkSignatureStatus === 'VERIFIED' ? 'PASS' : 'FAIL',
       evidence: provenance.watermarkSignatureStatus === 'VERIFIED' ? `Key ${signingKeys.fingerprint}` : provenance.failures.join('; ') || provenance.watermarkSignatureStatus,
     },
+    ...(witness
+      ? [
+          {
+            name: 'Independent witness (second implementation)',
+            status: witness.verified && witness.agreesWithPrimary ? 'PASS' : 'FAIL',
+            evidence: witness.verified && witness.agreesWithPrimary
+              ? 'Verified separately and agrees with the primary check on signature, digests and payload'
+              : [...witness.disagreements, ...witness.reasons].join('; '),
+          },
+        ]
+      : []),
     {
       name: `Lexical grounding (${evaluator === 'alpha' ? 'words' : 'word pairs'})`,
       status: groundingPassed ? 'PASS' : 'FAIL',
@@ -287,7 +315,14 @@ Return JSON:
     ...semanticAudit.invariantAudit,
   ];
 
-  const channelPassed = provenance.watermarkSignatureStatus === 'VERIFIED' && provenance.decompressionStatus;
+  const primaryChannel = provenance.watermarkSignatureStatus === 'VERIFIED' && provenance.decompressionStatus;
+  const channelPassed = witness ? witness.verified && witness.agreesWithPrimary && primaryChannel : primaryChannel;
+  const channelFailures = witness
+    ? [
+        ...(witness.agreesWithPrimary ? [] : [`implementations disagree (${witness.disagreements.join('; ')})`]),
+        ...witness.reasons,
+      ]
+    : provenance.failures;
   const llmPassed = llmAvailable && semanticAudit.boundaryDecision === 'APPROVED';
   const passedPhaseBoundary = channelPassed && groundingPassed && llmPassed;
 
@@ -298,14 +333,16 @@ Return JSON:
 
   const prefix = evaluator === 'alpha' ? 'Guard Alpha' : 'Guard Beta';
   const guard1 = {
-    name: `${prefix} · Check 1: Signature & decompression`,
+    name: `${prefix} · Check 1: Signature & decompression${witness ? ' (independent witness)' : ''}`,
     status: channelPassed ? ('PASS' as const) : ('FAIL' as const),
     compressionIntegrityLemmaVerified: provenance.decompressionStatus,
     channelDriftDetected: !channelPassed,
     preCompressionHashMatch: provenance.watermarkSignatureStatus === 'VERIFIED',
     evidence: channelPassed
-      ? 'Signature verified; transcript and logic hashes match the signed manifest; decompressed payload is byte-identical.'
-      : provenance.failures.join('; '),
+      ? witness
+        ? 'Independent witness implementation verified signature, digests and payload, and agrees with the primary check on every field.'
+        : 'Signature verified; transcript and logic hashes match the signed manifest; decompressed payload is byte-identical.'
+      : channelFailures.join('; ') || 'channel check failed',
   };
   const guard2 = {
     name: `${prefix} · Check 2: Lexical grounding`,
@@ -337,7 +374,8 @@ Return JSON:
     watermarkSignatureStatus: provenance.watermarkSignatureStatus,
     decompressionStatus: provenance.decompressionStatus,
     cryptographicDetails: provenance.cryptographicDetails,
-    provenanceFailures: provenance.failures,
+    provenanceFailures: witness ? channelFailures : provenance.failures,
+    witness,
     semanticAudit,
     llmAvailable,
     passedPhaseBoundary,
@@ -611,6 +649,7 @@ async function startServer() {
         },
       });
     } catch (err: any) {
+      if (err instanceof MalformedTextError) return res.status(400).json({ error: err.message });
       sendError(res, err, 'Watermarking/compression failed');
     }
   });
@@ -731,6 +770,7 @@ ${RCL_SCHEMA}`;
         wordDelta: g2.semanticDistanceDelta,
         epsilon: g2.epsilonThreshold,
         llmAvailable: report.llmAvailable,
+        witnessAgreed: report.witness ? report.witness.agreesWithPrimary : null,
         modelDecision: report.semanticAudit.boundaryDecision,
       });
       res.json({ success: true, guardReport: { ...report, ledgerSeq: entry.seq, ledgerHash: entry.hash }, evaluator });

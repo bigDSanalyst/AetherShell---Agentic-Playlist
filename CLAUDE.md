@@ -45,6 +45,7 @@ Run lint and tests before every commit.
 | Area | Files |
 | --- | --- |
 | Signing, hashes, guard provenance checks | `server/provenance.ts` |
+| Guard Beta's independent verifier (must not import provenance.ts) | `server/witness.ts` |
 | Run ledger, Merkle head/proofs | `server/runLedger.ts` |
 | Drift monitor (e-process) | `server/eprocess.ts` |
 | Deployment self-check | `server/doctor.ts`, `scripts/doctor.ts` |
