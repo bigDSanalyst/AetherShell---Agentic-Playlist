@@ -28,3 +28,24 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+
+  # The priority anchors (anchors/, see scripts/anchor.ts): the chain must hold,
+  # each manifest must hash to what the log says, and each .ots must cover those
+  # bytes. Read-only and offline; a red run is a finding for a human, never
+  # something to repair automatically.
+  anchors:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install opentimestamps-client==0.7.2
+      - run: npm ci --no-audit --no-fund
+      - name: Verify the anchor chain
+        run: npm run anchor -- verify

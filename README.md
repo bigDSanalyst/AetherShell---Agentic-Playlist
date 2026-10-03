@@ -55,6 +55,27 @@ flowchart LR
 
 Only the owner's key changes the charter. Everything else reads the ledger; nothing rewrites it.
 
+## Proving when: Bitcoin-anchored timestamps
+
+`npm run anchor -- run` records a manifest of the current commit (git HEAD and
+tree hash, plus the author and licence from `package.json`) in `anchors/`,
+chains it into `anchors/log.jsonl`, and submits its hash to the
+[OpenTimestamps](https://opentimestamps.org) calendars. Within a few hours the
+calendars commit it to a Bitcoin block; `npm run anchor -- upgrade` fetches that
+proof into the `.ots` file. Anyone can then check, without trusting the author,
+GitHub or this repository, that this exact code existed by that block's time:
+`ots verify anchors/<id>.json.ots` (with a Bitcoin node), or `npm run anchor -- verify`
+for the chain and digests offline.
+
+Add `--ledger <ledger.jsonl>` to anchor the run ledger's head (size, last hash,
+Merkle root) as well; a ledger that fails verification is refused. Only hashes
+leave the machine. Needs the `ots` client: `pip install opentimestamps-client`.
+Exit codes: 0 done, 1 needs a human, 2 calendars unreachable (state unknown, not
+"unconfirmed"). Same design as syndicate-genesis's `tools/anchor.py`.
+
+A timestamp proves existence by a date. It does not by itself prove who wrote
+the code, or that nobody had the idea earlier.
+
 ## Running locally
 
 ```bash
@@ -68,6 +89,17 @@ npm run dev            # http://127.0.0.1:3000
 * `npm test`: unit tests (signing/verification, tamper cases, URL validation, caption grouping, grounding).
 * `npm run lint`: TypeScript check.
 * `npm run build && NODE_ENV=production npm start`: production build.
+
+## License
+
+Copyright (C) 2026 Nicholas Clifford Maino.
+
+AetherShell is free software: you can redistribute it and/or modify it under the
+terms of the GNU Affero General Public License, version 3 only (AGPL-3.0-only),
+as published by the Free Software Foundation. See [LICENSE](LICENSE).
+
+In short: you may use, study, change and share it; if you run a modified version
+for others over a network, you must offer them its source under the same licence.
 
 ## Deploying
 
