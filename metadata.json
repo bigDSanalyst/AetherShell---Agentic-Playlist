@@ -1,0 +1,6 @@
+{
+  "name": "AetherShell - Agentic Playlist Transcriber & Guard Shell",
+  "description": "Transcribes and compresses YouTube playlists using Recursive Cognitive Loops (RCL) and Structured State Induction (SSI) within an agentic inner shell, watermarking transcripts and binding signatures across phase boundaries to a second guard shell.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
