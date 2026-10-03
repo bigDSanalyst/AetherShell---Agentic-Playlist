@@ -38,7 +38,7 @@ interface InnerShellBodyProps {
   activeVideo: VideoNode | null;
   sessionMemory: PersistentSessionMemory;
   onUpdateSessionMemory: (newMemory: Record<string, any>) => void;
-  onRunRclSsi: (iterations: number, directives: string) => void;
+  onRunRclSsi: (iterations: number | 'auto', directives: string) => void;
   isLoading: boolean;
   onProceedToCrypto: () => void;
   lastExecutionResult: ScriptExecutionResult | null;
@@ -58,6 +58,8 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
   setLastExecutionResult,
 }) => {
   const [rclIterations, setRclIterations] = useState(3);
+  // Let AetherTwin choose the pass count from the guards' past verdicts.
+  const [autoPasses, setAutoPasses] = useState(false);
   const [userDirectives, setUserDirectives] = useState('');
   const [isExecutingScript, setIsExecutingScript] = useState(false);
   const [customScriptCode, setCustomScriptCode] = useState<string>('');
@@ -181,11 +183,16 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
             <input
               type="range"
               min={1}
-              max={6}
+              max={5}
               value={rclIterations}
+              disabled={autoPasses}
               onChange={(e) => setRclIterations(Number(e.target.value))}
-              className="w-full accent-cyan-400 cursor-pointer"
+              className="w-full accent-cyan-400 cursor-pointer disabled:opacity-40"
             />
+            <label className="flex items-center gap-1.5 text-[10px] font-mono text-slate-400 cursor-pointer">
+              <input type="checkbox" checked={autoPasses} onChange={(e) => setAutoPasses(e.target.checked)} className="accent-emerald-400" />
+              Let AetherTwin choose (learned from guard verdicts)
+            </label>
           </div>
 
           <div className="md:col-span-6 space-y-1">
@@ -203,7 +210,7 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
 
           <div className="md:col-span-3">
             <button
-              onClick={() => onRunRclSsi(rclIterations, userDirectives)}
+              onClick={() => onRunRclSsi(autoPasses ? 'auto' : rclIterations, userDirectives)}
               disabled={isLoading || !activeVideo?.rawTranscript}
               className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-slate-950 font-bold text-xs font-mono transition-all shadow-md shadow-cyan-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
             >
@@ -364,6 +371,23 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
                     </div>
                   )}
                 </div>
+
+                {/* What AetherTwin's learning contributed to this synthesis */}
+                {rclAnalysis.learning && (
+                  <div className="p-3 rounded-xl bg-emerald-950/20 border border-emerald-900/60 space-y-1 font-mono text-[11px]">
+                    <span className="text-emerald-300">
+                      Learning: {rclAnalysis.learning.passes} pass(es), {rclAnalysis.learning.chosenBy === 'learned' ? 'chosen by AetherTwin' : 'chosen by you'}
+                    </span>
+                    <p className="text-slate-400 font-sans text-xs">{rclAnalysis.learning.why}</p>
+                    <p className="text-slate-400 font-sans text-xs">
+                      {rclAnalysis.learning.lessonsUsed.length
+                        ? `Shown ${rclAnalysis.learning.lessonsUsed.length} lesson(s) from rejected syntheses: ${rclAnalysis.learning.lessonsUsed.map((l) => `${l.id} (${l.failedChecks.join('; ') || 'rejected'})`).join(', ')}.`
+                        : 'No lessons yet for this material.'}{' '}
+                      {rclAnalysis.learning.exampleUsed ? `Shown passed example ${rclAnalysis.learning.exampleUsed} as a grounding standard.` : 'No passed example from this playlist yet.'}
+                    </p>
+                    <p className="text-slate-500 text-[10px]">Recorded as ledger entry #{rclAnalysis.learning.ledgerSeq}. Run the guards to teach it.</p>
+                  </div>
+                )}
 
                 {/* Reflexive Feedback Notes */}
                 <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80 space-y-1">

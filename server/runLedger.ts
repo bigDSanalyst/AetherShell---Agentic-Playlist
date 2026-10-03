@@ -4,7 +4,7 @@ import path from 'path';
 import { canonicalJson, sha256Hex, type SigningKeys } from './provenance';
 
 // Append-only, hash-chained record of what the server itself did: every
-// signing (bind) and every guard verdict it produced. Ported in spirit from
+// signing (bind), synthesis and guard verdict it produced. Ported in spirit from
 // Dharmapala's runs.py / ledger.py and the syndicate-genesis anchor log.
 //
 // - Each entry names the previous entry's hash, so an edit, a drop from the
@@ -21,7 +21,7 @@ import { canonicalJson, sha256Hex, type SigningKeys } from './provenance';
 export const LEDGER_FORMAT = 'aethershell-ledger/v1';
 export const GENESIS = '0'.repeat(64);
 
-export type LedgerEntryKind = 'bind' | 'guard' | 'charter' | 'exchange';
+export type LedgerEntryKind = 'bind' | 'guard' | 'charter' | 'exchange' | 'synthesis';
 
 export interface LedgerEntry {
   format: typeof LEDGER_FORMAT;

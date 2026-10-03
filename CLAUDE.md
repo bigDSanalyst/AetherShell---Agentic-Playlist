@@ -55,6 +55,7 @@ Run lint and tests before every commit.
 | Guard charter (owner-signed settings) | `server/charter.ts`, `scripts/owner.ts` |
 | Owner ⇄ system exchange (concerns, answers, overrides) | `server/exchange.ts`, `src/components/ExchangePanel.tsx` |
 | Run ledger, Merkle head/proofs | `server/runLedger.ts` |
+| Learning: lessons, examples, pass-count bandit (never touches the charter) | `server/learning.ts` |
 | Drift monitor (e-process) | `server/eprocess.ts` |
 | Deployment self-check | `server/doctor.ts`, `scripts/doctor.ts` |
 | YouTube captions / playlists | `server/youtube.ts` |

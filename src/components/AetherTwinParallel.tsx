@@ -564,6 +564,68 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
         </div>
       </div>
 
+      {/* WHAT AETHERTWIN HAS LEARNED (server ledger) */}
+      <div className="rounded-2xl border border-emerald-800/50 bg-slate-900/80 p-5 space-y-3 font-mono text-xs">
+        <div className="flex items-center gap-2.5 pb-2 border-b border-slate-800">
+          <span className="p-2 rounded-xl bg-emerald-950 text-emerald-300 border border-emerald-700/60">
+            <Brain className="w-4 h-4" />
+          </span>
+          <div>
+            <h3 className="uppercase tracking-wider text-slate-100 font-bold">What AetherTwin has learned</h3>
+            <p className="text-slate-400 font-sans">
+              From the guards' verdicts on its own syntheses, as recorded in the ledger. It never changes the guards; only your signed charter does.
+            </p>
+          </div>
+        </div>
+        {!shadowState?.learning || shadowState.learning.syntheses === 0 ? (
+          <p className="text-slate-500 font-sans">Nothing yet. Run a synthesis, then the guards: each verdict becomes a lesson (rejected) or an example (passed).</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="p-2 rounded-lg bg-slate-950 border border-slate-800">
+                Syntheses judged
+                <strong className="block text-slate-100">
+                  {shadowState.learning.judged} / {shadowState.learning.syntheses}
+                </strong>
+              </div>
+              <div className="p-2 rounded-lg bg-slate-950 border border-slate-800">
+                Passed every guard
+                <strong className="block text-emerald-300">{shadowState.learning.passed}</strong>
+              </div>
+              <div className="p-2 rounded-lg bg-slate-950 border border-slate-800">
+                Lessons (verified)
+                <strong className="block text-amber-300">{shadowState.learning.lessons.valid}</strong>
+              </div>
+              <div className="p-2 rounded-lg bg-slate-950 border border-slate-800">
+                Examples (verified)
+                <strong className="block text-cyan-300">{shadowState.learning.examples.valid}</strong>
+              </div>
+            </div>
+            <p className="text-slate-400 font-sans">
+              With lessons: {shadowState.learning.lessonEffect.withLessons.passed}/{shadowState.learning.lessonEffect.withLessons.n} passed.
+              Without: {shadowState.learning.lessonEffect.withoutLessons.passed}/{shadowState.learning.lessonEffect.withoutLessons.n}.
+              {' '}Small samples are noisy; this is reported, not acted on.
+            </p>
+            {shadowState.learning.playlists.map((p: any) => (
+              <div key={p.playlistKey} className="p-2 rounded-lg bg-slate-950/70 border border-slate-800 space-y-1">
+                <div className="text-slate-300">{p.playlistKey}</div>
+                <div className="text-slate-500">
+                  {p.arms.length
+                    ? p.arms.map((a: any) => `${a.passes} pass(es): ${a.wins}/${a.n}`).join(' · ')
+                    : 'No judged syntheses here yet.'}
+                </div>
+                <div className="text-emerald-300/90 font-sans">Next "auto" choice: {p.next.why}</div>
+              </div>
+            ))}
+            {shadowState.learning.tampered.length > 0 && (
+              <p className="text-red-300 font-sans">
+                {shadowState.learning.tampered.length} stored item(s) do not match the ledger and are ignored.
+              </p>
+            )}
+          </>
+        )}
+      </div>
+
       {/* SECTION 1: OPTIMAL RCL ITERATION ADVISOR & EMPIRICAL CONVERGENCE ENGINE */}
       <div className="rounded-2xl border border-indigo-700/50 bg-gradient-to-br from-slate-900 via-indigo-950/20 to-slate-900 p-5 shadow-xl shadow-indigo-950/20 backdrop-blur-sm space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-indigo-900/60">
@@ -575,11 +637,11 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
               <h3 className="text-xs font-mono uppercase tracking-wider text-slate-100 font-bold flex items-center gap-2">
                 Optimal RCL Iteration Counts Advisor (Empirical Learning)
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/60">
-                  Fixed-Point Model
+                  This browser
                 </span>
               </h3>
               <p className="text-xs text-slate-400">
-                AetherTwin computes the mathematical convergence fixed point to recommend the precise iteration count that eliminates synthesis drift while avoiding over-specification.
+                Pass rates by iteration count, from runs observed in this browser. For the ledger-backed choice, tick "Let AetherTwin choose" in the Innershell.
               </p>
             </div>
           </div>
