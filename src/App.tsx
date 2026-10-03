@@ -603,6 +603,12 @@ export default function App() {
 
       {/* Main Body */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6 space-y-6">
+        {playlist?.isDemo && (
+          <div role="status" className="px-4 py-2 rounded-xl border border-amber-600/60 bg-amber-950/40 text-amber-200 text-xs font-mono">
+            [DEMO] "{playlist.title}" is synthetic sample text, not real captions. Syntheses, signatures and guard verdicts on it are real
+            runs over made-up content; AetherTwin keeps its lessons separate from real playlists.
+          </div>
+        )}
         <ErrorBoundary key={activeTab} fallbackTitle="This panel hit an error">
         {/* Phase Boundary Membrane (Always visible between steps) */}
         <PhaseBoundary
