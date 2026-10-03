@@ -75,6 +75,20 @@ the server can call (`npm run owner -- propose / sign --set reviewModels=local:g
 Prefer a different model family for review than for synthesis, so the reviewer
 does not share the writer's blind spots. Voice input still uses Gemini's audio model.
 
+Things that affect accuracy:
+
+- **Context window (Ollama).** Ollama's default context is small (2-4K tokens) and
+  it drops the start of a longer prompt without an error. A synthesis prompt
+  carries up to 15,000 characters of transcript (~4K tokens) plus instructions,
+  so start the server with a larger window: `OLLAMA_CONTEXT_LENGTH=16384 ollama serve`.
+- **Every model is checked against the source, not against each other.** Each RCL
+  pass sees the original transcript; the guards measure the final logic against
+  the full transcript, whichever model (or mix of models, after a fallback) wrote
+  it. The ledger records which model wrote each pass (`modelsUsed`) and which
+  model reviewed each verdict (`reviewModel`).
+- **A model that answers with invalid JSON is skipped** and the next model is
+  tried; if none gives usable JSON the call fails closed.
+
 ## Proving when: Bitcoin-anchored timestamps
 
 `npm run anchor -- run` records a manifest of the current commit (git HEAD and

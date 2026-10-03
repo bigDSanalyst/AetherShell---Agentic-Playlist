@@ -278,7 +278,14 @@ class LlmUnavailableError extends Error {
 
 // One model call, through whichever provider each model names (server/models.ts).
 // Tries the models in order; fails closed (LlmUnavailableError) if none answers.
-async function callModel(options: { contents: any; config?: any; preferredModel?: string; taskName: string; models?: string[] }) {
+async function callModel(options: {
+  contents: any;
+  config?: any;
+  preferredModel?: string;
+  taskName: string;
+  models?: string[];
+  accept?: (text: string) => boolean; // an answer that fails this counts as no answer; the next model is tried
+}) {
   // Only models from the configured cascade may be requested by the client.
   // An explicit list (the charter's guard reviewers) replaces the cascade.
   const preferred = options.preferredModel && MODEL_CASCADE.includes(options.preferredModel) ? options.preferredModel : null;
@@ -305,8 +312,9 @@ async function callModel(options: { contents: any; config?: any; preferredModel?
               json: options.config?.responseMimeType === 'application/json',
             });
       geminiUsage.record(ref, 'ok');
-      if (text) return { text, modelUsed: ref };
-      lastError = new Error(`Empty response from ${ref}`);
+      if (text && (!options.accept || options.accept(text))) return { text, modelUsed: ref };
+      lastError = new Error(text ? `${ref} returned an unusable answer (invalid JSON)` : `Empty response from ${ref}`);
+      if (text) console.warn(`[model] ${options.taskName}: ${ref} returned invalid JSON; trying the next model`);
     } catch (err: any) {
       lastError = err;
       geminiUsage.record(ref, classifyGeminiError(err), err);
@@ -323,7 +331,11 @@ async function callModel(options: { contents: any; config?: any; preferredModel?
 }
 
 async function callModelJson(options: { contents: any; preferredModel?: string; taskName: string; models?: string[] }) {
-  const { text, modelUsed } = await callModel({ ...options, config: { responseMimeType: 'application/json' } });
+  const { text, modelUsed } = await callModel({
+    ...options,
+    config: { responseMimeType: 'application/json' },
+    accept: (t) => parseModelJson(t) !== undefined,
+  });
   const data = parseModelJson(text);
   if (data === undefined) throw new LlmUnavailableError(new Error(`${modelUsed} returned invalid JSON`));
   return { data, modelUsed };
@@ -606,6 +618,7 @@ Return JSON:
     witness,
     semanticAudit,
     llmAvailable,
+    reviewModel: modelUsed, // which model made the semantic judgement (null if none could)
     passedPhaseBoundary,
     multiGuardTelemetry: {
       guard1ChannelSentinel: guard1,
@@ -1034,6 +1047,7 @@ ${RCL_SCHEMA}`;
         wordDelta: g2.semanticDistanceDelta,
         epsilon: g2.epsilonThreshold,
         llmAvailable: report.llmAvailable,
+        reviewModel: report.reviewModel,
         witnessAgreed: report.witness ? report.witness.agreesWithPrimary : null,
         modelDecision: report.semanticAudit.boundaryDecision,
         charterVersion: charter.version,

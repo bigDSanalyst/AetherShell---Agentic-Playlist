@@ -172,6 +172,7 @@ export interface InvariantAuditItem {
 }
 
 export interface GuardAuditReport {
+  reviewModel?: string | null; // the model that made the semantic judgement; null if none could
   guardShellTimestamp: number;
   watermarkSignatureStatus: 'VERIFIED' | 'MISMATCH' | 'MISSING';
   decompressionStatus: boolean;
