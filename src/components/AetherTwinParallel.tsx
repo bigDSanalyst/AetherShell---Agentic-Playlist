@@ -232,11 +232,10 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
       });
 
       // Absorb into server-side lattice
-      absorbRunIntoTwin({
-        runId: innershellLogic.logicId,
-        innershellLogic,
-        guardReport,
-      }).catch(() => {});
+      // The server already recorded this guard run in its ledger; refresh the view.
+      absorbRunIntoTwin({ runId: innershellLogic.logicId })
+        .then((res) => res.success && setShadowState(res.shadowState))
+        .catch(() => {});
     }
   }, [innershellLogic?.logicId, guardReport?.guardShellTimestamp]);
 
@@ -1389,6 +1388,55 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
         </div>
       </div>
 
+      {/* Drift monitor over the server's run ledger */}
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 backdrop-blur-sm space-y-3 font-mono text-xs">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-slate-800">
+          <div>
+            <h3 className="text-xs uppercase tracking-wider text-slate-200 font-semibold">Guard Failure Drift (server ledger)</h3>
+            <p className="text-[11px] text-slate-400 font-sans">
+              Anytime-valid e-process over every guard run the server recorded (runs where the model was unavailable are left out).
+              It flags a failure rate credibly above {shadowState?.drift ? `${(shadowState.drift.p0 * 100).toFixed(0)}%` : 'the baseline'} at
+              false-alarm level {shadowState?.drift ? shadowState.drift.alpha : 'α'}, and can be read after every run.
+            </p>
+          </div>
+          <span
+            className={`px-2.5 py-1 rounded font-bold text-[10px] uppercase shrink-0 ${
+              !shadowState?.drift || shadowState.drift.n === 0
+                ? 'bg-slate-900 text-slate-400 border border-slate-800'
+                : shadowState.drift.drifted
+                ? 'bg-rose-950 text-rose-300 border border-rose-700/60'
+                : 'bg-emerald-950 text-emerald-300 border border-emerald-700/60'
+            }`}
+          >
+            {!shadowState?.drift || shadowState.drift.n === 0 ? 'No runs yet' : shadowState.drift.drifted ? 'Drift detected' : 'No evidence of drift'}
+          </span>
+        </div>
+        {shadowState?.drift && shadowState.drift.n > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+            <div className="p-2 rounded bg-slate-950 border border-slate-800">
+              <span className="text-slate-500 block">Guard runs</span>
+              <strong className="text-slate-200">{shadowState.drift.n}</strong>
+            </div>
+            <div className="p-2 rounded bg-slate-950 border border-slate-800">
+              <span className="text-slate-500 block">Failure rate</span>
+              <strong className="text-slate-200">
+                {(shadowState.drift.failureRate * 100).toFixed(1)}% ({shadowState.drift.failures})
+              </strong>
+            </div>
+            <div className="p-2 rounded bg-slate-950 border border-slate-800">
+              <span className="text-slate-500 block">log e / threshold</span>
+              <strong className="text-slate-200">
+                {shadowState.drift.logE} / {shadowState.drift.threshold}
+              </strong>
+            </div>
+            <div className="p-2 rounded bg-slate-950 border border-slate-800">
+              <span className="text-slate-500 block">Ledger entries</span>
+              <strong className="text-slate-200">{shadowState.ledgerSize ?? '—'}</strong>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Discovered Meta-Theorems & Emergent Invariants Section */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5 backdrop-blur-sm space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
@@ -1400,7 +1448,7 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
               <h3 className="text-xs font-mono uppercase tracking-wider text-slate-200 font-semibold flex items-center gap-2">
                 Discovered Meta-Theorems & Learned Invariants
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800/60">
-                  {shadowState?.discoveredTheorems?.length || 3} Active Rules
+                  {shadowState?.discoveredTheorems?.length ?? 0} Active Rules
                 </span>
               </h3>
               <p className="text-xs text-slate-400">

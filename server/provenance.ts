@@ -74,6 +74,12 @@ export function normalizeTranscript(text: string): string {
   return text.replace(/\r\n/g, '\n').trim();
 }
 
+export class MalformedTextError extends Error {}
+
+export function isWellFormedText(text: string): boolean {
+  return Buffer.from(text, 'utf8').toString('utf8') === text;
+}
+
 export function hashTranscript(text: string): string {
   return sha256Hex(normalizeTranscript(text));
 }
@@ -142,6 +148,11 @@ export function watermarkAndCompress(
   input: { rawTranscript: string; logic?: unknown; videoId?: string; playlistId?: string },
   now: number = Date.now()
 ): WatermarkResult {
+  // UTF-8 cannot carry a lone surrogate (it becomes U+FFFD), so the compressed
+  // copy of such a transcript would not be the transcript. Refuse to sign it.
+  if (!isWellFormedText(input.rawTranscript)) {
+    throw new MalformedTextError('Transcript is not well-formed Unicode (lone surrogate); refusing to sign');
+  }
   const transcriptSha256 = hashTranscript(input.rawTranscript);
   const logicSha256 = input.logic ? hashLogic(input.logic) : null;
   const watermarkId = `WM-${transcriptSha256.slice(0, 16).toUpperCase()}-${now.toString(36).toUpperCase()}`;

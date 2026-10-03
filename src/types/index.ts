@@ -177,6 +177,18 @@ export interface GuardAuditReport {
     signerKeyFingerprint?: string;
   };
   provenanceFailures?: string[];
+  // Guard Beta only: reading by the independent witness implementation.
+  witness?: {
+    signatureValid: boolean;
+    transcriptHashMatch: boolean;
+    logicHashMatch: boolean;
+    watermarkIdMatch: boolean;
+    decompressionMatch: boolean;
+    verified: boolean;
+    reasons: string[];
+    agreesWithPrimary: boolean;
+    disagreements: string[];
+  } | null;
   llmAvailable?: boolean;
   evaluatorId?: string;
   semanticAudit: {
@@ -338,6 +350,19 @@ export interface ParallelShadowState {
   }[];
   lastSyncTimestamp: number;
   appliedToPrimaryCount: number;
+  // From the server's run ledger (anytime-valid e-process over guard failures).
+  ledgerSize?: number;
+  drift?: {
+    n: number;
+    failures: number;
+    failureRate: number;
+    p0: number;
+    alpha: number;
+    logE: number;
+    threshold: number;
+    drifted: boolean;
+    direction: 'rising' | 'falling' | 'flat';
+  };
 }
 
 export interface PersistentSessionMemory {

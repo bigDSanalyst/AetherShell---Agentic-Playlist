@@ -15,10 +15,14 @@ import {
   mapWithConcurrency,
   parseYouTubeUrl,
 } from './server/youtube';
-import { loadSigningKeys, verifyProvenance, watermarkAndCompress } from './server/provenance';
+import { MalformedTextError, hashLogic, hashTranscript, loadSigningKeys, verifyProvenance, watermarkAndCompress } from './server/provenance';
 import { bigramOverlap, changeBetween, contentTokens, logicClaimText, round4, wordOverlap } from './server/grounding';
 import { resolveGitHubFile } from './server/github';
 import { parseModelJson } from './server/modelJson';
+import { compareWithPrimary, witnessRead } from './server/witness';
+import { RunLedger, type LedgerEntry } from './server/runLedger';
+import { ledgerDrift } from './server/eprocess';
+import { diagnose } from './server/doctor';
 import { envFloat, envInt, rateLimit, requireAccessToken } from './server/http';
 
 dotenv.config();
@@ -31,6 +35,24 @@ const ai = new GoogleGenAI({
 });
 
 const signingKeys = loadSigningKeys();
+
+// Append-only, hash-chained record of every signing and guard verdict this
+// server produced. AETHERSHELL_LEDGER_PATH="" keeps it in memory only.
+const LEDGER_PATH = process.env.AETHERSHELL_LEDGER_PATH ?? path.resolve(__dirname, 'data', 'ledger.jsonl');
+const runLedger = new RunLedger(signingKeys, LEDGER_PATH || null);
+if (runLedger.loadProblems.length) {
+  console.error(`[ledger] ${LEDGER_PATH} failed verification; new entries will be refused: ${runLedger.loadProblems.join('; ')}`);
+}
+const DRIFT_P0 = envFloat('DRIFT_P0', 0.15);
+const DRIFT_ALPHA = envFloat('DRIFT_ALPHA', 0.01);
+
+// Guard runs as the ledger recorded them.
+function guardEntries(): LedgerEntry[] {
+  return runLedger.all().filter((e) => e.kind === 'guard');
+}
+function driftReport() {
+  return ledgerDrift(runLedger.all(), DRIFT_P0, DRIFT_ALPHA);
+}
 if (signingKeys.ephemeral) {
   console.warn(
     '[provenance] AETHERSHELL_SIGNING_KEY is not set; using a random Ed25519 key for this process. ' +
@@ -172,6 +194,22 @@ async function runGuardShell(evaluator: Evaluator, body: any) {
 
   const provenance = verifyProvenance(signingKeys, { directTranscript, innershellLogic, watermark, compressedRecord });
 
+  // Guard Beta does not trust that implementation alone: it reads the same
+  // claim with server/witness.ts, which shares no code with provenance.ts.
+  // Beta's channel check passes only if the witness verifies everything AND
+  // agrees with the primary reading field by field; any disagreement means
+  // one implementation is wrong, so it is a refusal.
+  let witness: null | (ReturnType<typeof witnessRead> & { agreesWithPrimary: boolean; disagreements: string[] }) = null;
+  if (evaluator === 'beta') {
+    const w = witnessRead(signingKeys.publicKeyPem, { directTranscript, innershellLogic, watermark, compressedRecord });
+    const d = provenance.cryptographicDetails;
+    const cmp = compareWithPrimary(
+      { signatureValid: d.signatureValid, transcriptHashMatch: d.transcriptHashMatch, logicHashMatch: d.logicHashMatch, decompression: provenance.decompressionStatus },
+      w
+    );
+    witness = { ...w, ...cmp };
+  }
+
   const claimText = logicClaimText(innershellLogic);
   const ov = evaluator === 'alpha' ? wordOverlap(claimText, directTranscript) : bigramOverlap(claimText, directTranscript);
   const minOverlap = evaluator === 'alpha' ? MIN_WORD_OVERLAP : MIN_BIGRAM_OVERLAP;
@@ -257,6 +295,17 @@ Return JSON:
       status: provenance.watermarkSignatureStatus === 'VERIFIED' ? 'PASS' : 'FAIL',
       evidence: provenance.watermarkSignatureStatus === 'VERIFIED' ? `Key ${signingKeys.fingerprint}` : provenance.failures.join('; ') || provenance.watermarkSignatureStatus,
     },
+    ...(witness
+      ? [
+          {
+            name: 'Independent witness (second implementation)',
+            status: witness.verified && witness.agreesWithPrimary ? 'PASS' : 'FAIL',
+            evidence: witness.verified && witness.agreesWithPrimary
+              ? 'Verified separately and agrees with the primary check on signature, digests and payload'
+              : [...witness.disagreements, ...witness.reasons].join('; '),
+          },
+        ]
+      : []),
     {
       name: `Lexical grounding (${evaluator === 'alpha' ? 'words' : 'word pairs'})`,
       status: groundingPassed ? 'PASS' : 'FAIL',
@@ -266,7 +315,14 @@ Return JSON:
     ...semanticAudit.invariantAudit,
   ];
 
-  const channelPassed = provenance.watermarkSignatureStatus === 'VERIFIED' && provenance.decompressionStatus;
+  const primaryChannel = provenance.watermarkSignatureStatus === 'VERIFIED' && provenance.decompressionStatus;
+  const channelPassed = witness ? witness.verified && witness.agreesWithPrimary && primaryChannel : primaryChannel;
+  const channelFailures = witness
+    ? [
+        ...(witness.agreesWithPrimary ? [] : [`implementations disagree (${witness.disagreements.join('; ')})`]),
+        ...witness.reasons,
+      ]
+    : provenance.failures;
   const llmPassed = llmAvailable && semanticAudit.boundaryDecision === 'APPROVED';
   const passedPhaseBoundary = channelPassed && groundingPassed && llmPassed;
 
@@ -277,14 +333,16 @@ Return JSON:
 
   const prefix = evaluator === 'alpha' ? 'Guard Alpha' : 'Guard Beta';
   const guard1 = {
-    name: `${prefix} · Check 1: Signature & decompression`,
+    name: `${prefix} · Check 1: Signature & decompression${witness ? ' (independent witness)' : ''}`,
     status: channelPassed ? ('PASS' as const) : ('FAIL' as const),
     compressionIntegrityLemmaVerified: provenance.decompressionStatus,
     channelDriftDetected: !channelPassed,
     preCompressionHashMatch: provenance.watermarkSignatureStatus === 'VERIFIED',
     evidence: channelPassed
-      ? 'Signature verified; transcript and logic hashes match the signed manifest; decompressed payload is byte-identical.'
-      : provenance.failures.join('; '),
+      ? witness
+        ? 'Independent witness implementation verified signature, digests and payload, and agrees with the primary check on every field.'
+        : 'Signature verified; transcript and logic hashes match the signed manifest; decompressed payload is byte-identical.'
+      : channelFailures.join('; ') || 'channel check failed',
   };
   const guard2 = {
     name: `${prefix} · Check 2: Lexical grounding`,
@@ -316,7 +374,8 @@ Return JSON:
     watermarkSignatureStatus: provenance.watermarkSignatureStatus,
     decompressionStatus: provenance.decompressionStatus,
     cryptographicDetails: provenance.cryptographicDetails,
-    provenanceFailures: provenance.failures,
+    provenanceFailures: witness ? channelFailures : provenance.failures,
+    witness,
     semanticAudit,
     llmAvailable,
     passedPhaseBoundary,
@@ -343,16 +402,6 @@ Return JSON:
 // ---------------------------------------------------------------------------
 // AetherTwin: records real guard outcomes only. Starts empty.
 // ---------------------------------------------------------------------------
-interface TwinRun {
-  runId: string;
-  at: number;
-  passed: boolean;
-  failureMode: string;
-  wordDelta: number | null;
-  epsilon: number | null;
-}
-
-const twinRuns: TwinRun[] = [];
 const shadowState: any = {
   twinId: 'AETHER-TWIN-01',
   twinName: 'AetherTwin run observer',
@@ -375,18 +424,25 @@ const shadowState: any = {
 };
 
 function refreshTwinStats() {
-  const n = twinRuns.length;
+  const runs = guardEntries();
+  const n = runs.length;
+  const mode = (e: LedgerEntry) => String(e.data.failureMode);
   shadowState.totalRunsAnalyzed = n;
   shadowState.learningVelocity = 0;
   // Share of runs in which each check caught a problem (observed, not predicted).
-  shadowState.synthesisDriftPreventionRate = n ? round4(twinRuns.filter((r) => r.failureMode === 'SYNTHESIS_DRIFT').length / n) : 0;
-  shadowState.channelDriftDetectionRate = n ? round4(twinRuns.filter((r) => r.failureMode === 'CHANNEL_DRIFT').length / n) : 0;
+  shadowState.synthesisDriftPreventionRate = n ? round4(runs.filter((e) => mode(e) === 'SYNTHESIS_DRIFT').length / n) : 0;
+  shadowState.channelDriftDetectionRate = n ? round4(runs.filter((e) => mode(e) === 'CHANNEL_DRIFT').length / n) : 0;
+  shadowState.lastObservedRunId = runs.at(-1)?.data.runId ?? null;
+  shadowState.drift = driftReport();
+  shadowState.ledgerSize = runLedger.size;
   shadowState.accumulatedTheoremsCount = shadowState.discoveredTheorems.length;
   shadowState.lastSyncTimestamp = Date.now();
 }
 
 async function startServer() {
   const app = express();
+  // Bind to loopback unless told otherwise (Cloud Run sets K_SERVICE).
+  const host = process.env.HOST || (process.env.K_SERVICE ? '0.0.0.0' : '127.0.0.1');
   app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : false);
   app.use(express.json({ limit: process.env.MAX_BODY_SIZE || '15mb' }));
 
@@ -571,9 +627,18 @@ async function startServer() {
         videoId: typeof videoId === 'string' ? videoId : undefined,
         playlistId: typeof playlistId === 'string' ? playlistId : undefined,
       });
+      const entry = runLedger.append('bind', {
+        watermarkId: out.watermark.watermarkId,
+        transcriptSha256: out.watermark.manifest.transcriptSha256,
+        logicSha256: out.watermark.manifest.logicSha256,
+        videoId: out.watermark.manifest.videoId,
+        playlistId: out.watermark.manifest.playlistId,
+        signatureSha256: hashTranscript(out.watermark.signature),
+      });
       res.json({
         success: true,
         ...out,
+        ledger: { seq: entry.seq, hash: entry.hash },
         auditTrail: {
           videoId: videoId ?? null,
           playlistId: playlistId ?? null,
@@ -584,6 +649,7 @@ async function startServer() {
         },
       });
     } catch (err: any) {
+      if (err instanceof MalformedTextError) return res.status(400).json({ error: err.message });
       sendError(res, err, 'Watermarking/compression failed');
     }
   });
@@ -691,7 +757,23 @@ ${RCL_SCHEMA}`;
         return res.status(400).json({ error: 'directTranscript and innershellLogic are required' });
       }
       const report = await runGuardShell(evaluator, req.body);
-      res.json({ success: true, guardReport: report, evaluator });
+      const g2 = report.multiGuardTelemetry.guard2SemanticAuditor;
+      const entry = runLedger.append('guard', {
+        runId: String(innershellLogic?.logicId || 'unknown').slice(0, 80),
+        evaluator,
+        watermarkId: req.body?.watermark?.watermarkId ?? null,
+        transcriptSha256: hashTranscript(directTranscript),
+        logicSha256: hashLogic(innershellLogic),
+        passed: report.passedPhaseBoundary,
+        failureMode: report.multiGuardTelemetry.triiVerificationCondition.failureModeClassification,
+        signatureStatus: report.watermarkSignatureStatus,
+        wordDelta: g2.semanticDistanceDelta,
+        epsilon: g2.epsilonThreshold,
+        llmAvailable: report.llmAvailable,
+        witnessAgreed: report.witness ? report.witness.agreesWithPrimary : null,
+        modelDecision: report.semanticAudit.boundaryDecision,
+      });
+      res.json({ success: true, guardReport: { ...report, ledgerSeq: entry.seq, ledgerHash: entry.hash }, evaluator });
     } catch (err: any) {
       sendError(res, err, 'Guard Shell validation failed');
     }
@@ -960,27 +1042,15 @@ Return JSON: { "passed": boolean, "score": 0-100, "decision": "APPROVED" | "QUAR
 
   // AetherTwin: observed guard outcomes only.
   app.get('/api/twin/telemetry', (_req: Request, res: Response) => {
+    refreshTwinStats();
     res.json({ success: true, shadowState });
   });
 
-  app.post('/api/twin/absorb', (req: Request, res: Response) => {
-    const { runId, guardReport } = req.body || {};
-    const id = String(runId || `RUN-${Date.now().toString(36)}`).slice(0, 80);
-    if (!twinRuns.some((r) => r.runId === id)) {
-      const g2 = guardReport?.multiGuardTelemetry?.guard2SemanticAuditor;
-      twinRuns.push({
-        runId: id,
-        at: Date.now(),
-        passed: guardReport?.passedPhaseBoundary === true,
-        failureMode: String(guardReport?.multiGuardTelemetry?.triiVerificationCondition?.failureModeClassification || 'UNKNOWN'),
-        wordDelta: typeof g2?.semanticDistanceDelta === 'number' ? g2.semanticDistanceDelta : null,
-        epsilon: typeof g2?.epsilonThreshold === 'number' ? g2.epsilonThreshold : null,
-      });
-      if (twinRuns.length > 500) twinRuns.shift();
-    }
-    shadowState.lastObservedRunId = id;
+  // Kept for client compatibility. The twin no longer accepts reports from
+  // the browser: it reads the guard runs this server recorded in its ledger.
+  app.post('/api/twin/absorb', (_req: Request, res: Response) => {
     refreshTwinStats();
-    res.json({ success: true, shadowState, message: `Recorded run ${id}. ${twinRuns.length} run(s) observed.` });
+    res.json({ success: true, shadowState, message: `${shadowState.totalRunsAnalyzed} guard run(s) in the server ledger.` });
   });
 
   // Counterfactual: re-score the runs already observed with a different
@@ -995,7 +1065,10 @@ Return JSON: { "passed": boolean, "score": 0-100, "decision": "APPROVED" | "QUAR
     if (!Number.isFinite(base) || !Number.isFinite(cf)) {
       return res.status(400).json({ error: 'baselineValue and counterfactualValue must be numbers' });
     }
-    const usable = twinRuns.filter((r) => r.wordDelta !== null);
+    // Alpha runs only: Alpha (words) and Beta (word pairs) use different scales.
+    const usable = guardEntries()
+      .filter((e) => e.data.evaluator === 'alpha' && typeof e.data.wordDelta === 'number')
+      .map((e) => ({ wordDelta: e.data.wordDelta as number }));
     if (usable.length === 0) {
       return res.status(409).json({ error: 'No observed guard runs to replay yet. Run the guard shell first.' });
     }
@@ -1015,7 +1088,7 @@ Return JSON: { "passed": boolean, "score": 0-100, "decision": "APPROVED" | "QUAR
       status: 'COMPLETED',
       ranAt: Date.now(),
       verdict: delta === 0 ? 'EQUIVALENT' : delta > 0 ? 'SUPERIOR' : 'INFERIOR',
-      note: `Grounding-check pass rate over ${usable.length} observed run(s). A higher pass rate means a looser check, not better logic.`,
+      note: `Grounding-check pass rate over ${usable.length} observed Guard Alpha run(s) from the ledger. A higher pass rate means a looser check, not better logic.`,
     };
     shadowState.counterfactuals.unshift(exp);
     shadowState.counterfactuals = shadowState.counterfactuals.slice(0, 50);
@@ -1030,6 +1103,38 @@ Return JSON: { "passed": boolean, "score": 0-100, "decision": "APPROVED" | "QUAR
     });
   });
 
+  // Run ledger: signed head, chain verification, inclusion proofs.
+  app.get('/api/ledger/head', (_req: Request, res: Response) => {
+    res.json({ success: true, ...runLedger.head(), publicKeyPem: signingKeys.publicKeyPem });
+  });
+  app.get('/api/ledger/verify', (_req: Request, res: Response) => {
+    res.json({ success: true, ...runLedger.verify(), path: runLedger.filePath });
+  });
+  app.get('/api/ledger/entries', (req: Request, res: Response) => {
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+    res.json({ success: true, size: runLedger.size, entries: runLedger.all().slice(-limit) });
+  });
+  app.get('/api/ledger/proof/:seq', (req: Request, res: Response) => {
+    const seq = Number(req.params.seq);
+    if (!Number.isInteger(seq) || seq < 0 || seq >= runLedger.size) {
+      return res.status(404).json({ error: `No ledger entry ${req.params.seq}` });
+    }
+    res.json({ success: true, ...runLedger.proof(seq) });
+  });
+
+  app.get('/api/doctor', (_req: Request, res: Response) => {
+    const v = runLedger.verify();
+    res.json(
+      diagnose({
+        env: process.env,
+        host,
+        signingKeyEphemeral: signingKeys.ephemeral,
+        ledger: { path: runLedger.filePath, size: runLedger.size, ok: v.ok, problems: v.problems },
+        drift: driftReport(),
+      })
+    );
+  });
+
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 
   if (process.env.NODE_ENV === 'production') {
@@ -1042,8 +1147,6 @@ Return JSON: { "passed": boolean, "score": 0-100, "decision": "APPROVED" | "QUAR
     app.use(vite.middlewares);
   }
 
-  // Bind to loopback unless told otherwise (Cloud Run sets K_SERVICE).
-  const host = process.env.HOST || (process.env.K_SERVICE ? '0.0.0.0' : '127.0.0.1');
   const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
   app.listen(port, host, () => {
     console.log(`AetherShell server online at http://${host}:${port}`);

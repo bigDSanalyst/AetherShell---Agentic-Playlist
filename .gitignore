@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# run ledger (append-only record; keep it, but not in git)
+data/
