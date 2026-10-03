@@ -27,7 +27,7 @@ import {
 import {
   fetchCuratedPlaylists,
   fetchPlaylistData,
-  transcribeAudioSegment,
+  fetchVideoCaptions,
   watermarkAndBindCrypto,
   runRclSsiCycle,
   validateWithGuardShell,
@@ -93,12 +93,10 @@ export default function App() {
             sessionName: parsed.sessionName || 'Default Active Working Lattice',
             createdAt: parsed.createdAt || Date.now(),
             lastActive: parsed.lastActive || Date.now(),
-            memoryLattice: parsed.memoryLattice && typeof parsed.memoryLattice === 'object' ? parsed.memoryLattice : {
-              agenticPhase: 'INIT',
-              sessionStep: 1,
-              activeInvariantThreshold: 0.95,
-              executionHistory: [],
-            },
+            memoryLattice:
+              parsed.memoryLattice && typeof parsed.memoryLattice === 'object'
+                ? parsed.memoryLattice
+                : { agenticPhase: 'INIT', sessionStep: 1, activeInvariantThreshold: 0.95, executionHistory: [] },
             historyRuns: Array.isArray(parsed.historyRuns) ? parsed.historyRuns : [],
           };
         }
@@ -141,8 +139,10 @@ export default function App() {
       try {
         const curated = await fetchCuratedPlaylists();
         setCuratedPlaylists(curated);
-        if (curated.length > 0) {
-          const res = await fetchPlaylistData({ curatedId: curated[0].id });
+        // Start on offline demo data; live presets hit YouTube, so load them on click.
+        const firstDemo = curated.find((c) => c.isDemo);
+        if (firstDemo) {
+          const res = await fetchPlaylistData({ curatedId: firstDemo.id });
           setPlaylist(res.playlist);
           if (res.playlist.videos.length > 0) {
             setActiveVideo(res.playlist.videos[0]);
@@ -150,38 +150,33 @@ export default function App() {
         }
       } catch (err: any) {
         console.error('Init error:', err);
-        showToast('Initialized offline fallback with curated data', 'info');
+        showToast(`Could not load demo playlists: ${err.message || err}`, 'error');
       }
     };
     init();
   }, []);
 
-  // Handler: Ingest URL or select curated
-  const handleIngestUrl = async (url: string) => {
-    // Regex validation helper to ensure the provided string is a valid YouTube playlist URL
-    const isValidYouTubePlaylistUrl = (inputUrl: string): boolean => {
-      const playlistRegex =
-        /^(https?:\/\/)?(www\.|m\.)?(youtube\.com\/(playlist\?.*?list=|watch\?.*?list=)|youtu\.be\/.*?[?&]list=)[a-zA-Z0-9_-]+/i;
-      return playlistRegex.test((inputUrl || '').trim());
-    };
-
-    const trimmedUrl = (url || '').trim();
-    if (!isValidYouTubePlaylistUrl(trimmedUrl)) {
-      showToast(
-        'Invalid YouTube playlist URL. Please provide a valid playlist link (e.g., https://www.youtube.com/playlist?list=...)',
-        'error'
-      );
+  const applyIngested = (res: Awaited<ReturnType<typeof fetchPlaylistData>>) => {
+    setPlaylist(res.playlist);
+    const firstWithText = res.playlist.videos.find((v) => v.rawTranscript) || res.playlist.videos[0];
+    if (firstWithText) setActiveVideo(firstWithText);
+    if (res.playlist.isDemo) {
+      showToast(`Loaded demo playlist (synthetic transcripts): "${res.playlist.title}"`, 'info');
       return;
     }
+    const withText = res.playlist.videos.filter((v) => v.rawTranscript).length;
+    showToast(
+      `Ingested "${res.playlist.title}": captions for ${withText}/${res.playlist.videos.length} video(s)` +
+        (res.metadataNote ? ` · ${res.metadataNote}` : ''),
+      withText === res.playlist.videos.length ? 'success' : 'info'
+    );
+  };
 
+  // Handler: Ingest URL or select curated
+  const handleIngestUrl = async (url: string) => {
     setIsLoading(true);
     try {
-      const res = await fetchPlaylistData({ playlistUrl: trimmedUrl });
-      setPlaylist(res.playlist);
-      if (res.playlist.videos.length > 0) {
-        setActiveVideo(res.playlist.videos[0]);
-      }
-      showToast(`Ingested playlist: "${res.playlist.title}"`, 'success');
+      applyIngested(await fetchPlaylistData({ playlistUrl: url }));
     } catch (err: any) {
       showToast(err.message || 'Failed to ingest playlist', 'error');
     } finally {
@@ -192,117 +187,63 @@ export default function App() {
   const handleLoadCurated = async (id: string) => {
     setIsLoading(true);
     try {
-      const res = await fetchPlaylistData({ curatedId: id });
-      setPlaylist(res.playlist);
-      if (res.playlist.videos.length > 0) {
-        setActiveVideo(res.playlist.videos[0]);
-      }
-      showToast(`Loaded curated playlist: "${res.playlist.title}"`, 'success');
+      applyIngested(await fetchPlaylistData({ curatedId: id }));
     } catch (err: any) {
-      showToast(err.message || 'Failed to load curated playlist', 'error');
+      showToast(err.message || 'Failed to load playlist', 'error');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Handler: Deep transcribe - bulk processing by mapping over all videos in the playlist
-  const handleDeepTranscribe = async (targetVideo?: VideoNode) => {
-    const videosToProcess =
-      playlist?.videos && playlist.videos.length > 0
-        ? playlist.videos
-        : targetVideo
-        ? [targetVideo]
-        : activeVideo
-        ? [activeVideo]
-        : [];
+  const captionsToVideo = (video: VideoNode, segments: any[]): VideoNode => ({
+    ...video,
+    segments,
+    rawTranscript: segments.map((s: any) => `[${s.start} - ${s.end}] ${s.speaker}: ${s.text}`).join('\n\n'),
+    transcriptSource: 'youtube-captions',
+    transcriptError: undefined,
+  });
 
+  // Re-fetch YouTube captions for one video, or (no argument) for every video
+  // in the playlist, sequentially with progress. Never generates text.
+  const handleDeepTranscribe = async (targetVideo?: VideoNode) => {
+    if (playlist?.isDemo) {
+      showToast('Demo videos are not real YouTube videos; there are no captions to fetch', 'info');
+      return;
+    }
+    const videosToProcess = targetVideo ? [targetVideo] : playlist?.videos || [];
     if (videosToProcess.length === 0) {
-      showToast('No videos available in current playlist to transcribe', 'error');
+      showToast('No videos to fetch captions for', 'error');
       return;
     }
 
     setIsLoading(true);
     const total = videosToProcess.length;
-    let completedCount = 0;
-
-    setTranscribeProgress({
-      current: 0,
-      total,
-      currentTitle: `Starting bulk transcription (${total} videos)...`,
-      percent: 0,
-    });
-
+    const updated = new Map<string, VideoNode>();
+    let ok = 0;
     try {
-      // Map over all videos in the current playlist with progress tracking
-      const updatedVideos = await Promise.all(
-        videosToProcess.map(async (v, index) => {
-          try {
-            setTranscribeProgress((prev) => ({
-              current: completedCount,
-              total,
-              currentTitle: `[${index + 1}/${total}] Transcribing: "${v.title}"`,
-              percent: Math.round((completedCount / total) * 100),
-            }));
-
-            const res = await transcribeAudioSegment({
-              videoTitle: v.title,
-              audioNotes: v.rawTranscript,
-              existingSegments: v.segments,
-            });
-
-            completedCount += 1;
-            setTranscribeProgress({
-              current: completedCount,
-              total,
-              currentTitle: `[${completedCount}/${total}] Transcribed: "${v.title}"`,
-              percent: Math.round((completedCount / total) * 100),
-            });
-
-            const updatedSegments = res.segments || [];
-            const updatedRaw = updatedSegments
-              .map((s: any) => `[${s.start} - ${s.end}] ${s.speaker}: ${s.text}`)
-              .join('\n\n') || v.rawTranscript || '';
-
-            return {
-              ...v,
-              segments: updatedSegments,
-              rawTranscript: updatedRaw,
-            };
-          } catch (err: any) {
-            console.warn(`Failed transcribing video "${v.title}":`, err);
-            completedCount += 1;
-            setTranscribeProgress({
-              current: completedCount,
-              total,
-              currentTitle: `[${completedCount}/${total}] Error in: "${v.title}"`,
-              percent: Math.round((completedCount / total) * 100),
-            });
-            return v;
-          }
-        })
-      );
-
-      // Update in playlist
-      if (playlist) {
-        setPlaylist({
-          ...playlist,
-          videos: updatedVideos,
-        });
-      }
-
-      // Update activeVideo with its refreshed version
-      if (activeVideo) {
-        const refreshed = updatedVideos.find((v) => v.id === activeVideo.id);
-        if (refreshed) {
-          setActiveVideo(refreshed);
+      for (let i = 0; i < total; i++) {
+        const v = videosToProcess[i];
+        setTranscribeProgress({ current: i, total, currentTitle: v.title, percent: Math.round((i / total) * 100) });
+        try {
+          const res = await fetchVideoCaptions({ youtubeId: v.youtubeId });
+          updated.set(v.id, captionsToVideo(v, res.segments || []));
+          ok++;
+        } catch (err: any) {
+          updated.set(v.id, { ...v, transcriptError: err?.message || 'Captions unavailable' });
         }
-      } else if (updatedVideos.length > 0) {
-        setActiveVideo(updatedVideos[0]);
       }
+      setTranscribeProgress({ current: total, total, currentTitle: 'Done', percent: 100 });
 
-      showToast(`Bulk transcribed all ${completedCount}/${total} videos in playlist!`, 'success');
-    } catch (err: any) {
-      showToast(err.message || 'Bulk transcription encountered an error', 'error');
+      if (playlist) {
+        setPlaylist({ ...playlist, videos: playlist.videos.map((v) => updated.get(v.id) || v) });
+      }
+      if (activeVideo && updated.has(activeVideo.id)) setActiveVideo(updated.get(activeVideo.id)!);
+
+      if (total === 1) {
+        showToast(ok ? `Re-fetched YouTube captions for "${videosToProcess[0].title}"` : `No captions: ${updated.get(videosToProcess[0].id)?.transcriptError}`, ok ? 'success' : 'error');
+      } else {
+        showToast(`Fetched captions for ${ok}/${total} videos`, ok === total ? 'success' : 'info');
+      }
     } finally {
       setIsLoading(false);
       setTranscribeProgress(null);
@@ -334,7 +275,7 @@ export default function App() {
         ...sessionMemory.memoryLattice,
         lastRclSynthesis: Date.now(),
         innershellLogicId: res.innershellLogic.logicId,
-        ssiContextWindow: res.rclResult?.ssiInjectedState?.activeContextWindow ?? 128000,
+        ssiContextWindow: res.rclResult.ssiInjectedState.activeContextWindow,
       };
 
       setSessionMemory((prev) => ({
@@ -372,6 +313,8 @@ export default function App() {
       const updatedVideo = {
         ...activeVideo,
         watermark: res.watermark,
+        // Keep the exact logic object that was signed with this transcript.
+        boundLogic: innershellLogic,
         compressedTranscript: res.compressed,
       };
 
@@ -419,7 +362,7 @@ export default function App() {
       if (res.guardReport.passedPhaseBoundary) {
         setBoundaryStatus('PASSED');
         showToast('Guard Shell: Architectural alignment approved at Phase Boundary!', 'success');
-      } else if (res.guardReport.semanticAudit?.feedbackLoopRequired) {
+      } else if (res.guardReport.semanticAudit.feedbackLoopRequired) {
         setBoundaryStatus('FEEDBACK_LOOP');
         showToast('Guard Shell: Critical feedback loop triggered due to invariant drift', 'error');
       } else {
@@ -435,9 +378,9 @@ export default function App() {
           {
             id: `RUN-${Date.now().toString(36)}`,
             timestamp: Date.now(),
-            videoTitle: activeVideo?.title || 'YouTube Ingestion Node',
-            alignmentScore: res.guardReport.semanticAudit?.alignmentScore ?? 95,
-            boundaryDecision: res.guardReport.semanticAudit?.boundaryDecision || 'APPROVED',
+            videoTitle: activeVideo.title,
+            alignmentScore: res.guardReport.semanticAudit.alignmentScore,
+            boundaryDecision: res.guardReport.semanticAudit.boundaryDecision,
           },
           ...prev.historyRuns.slice(0, 19),
         ],
@@ -615,208 +558,200 @@ export default function App() {
         </div>
       )}
 
-      {/* Main Header with ErrorBoundary Protection */}
-      <ErrorBoundary fallbackTitle="Header Navigation Intercepted">
-        <Header
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          sessionMemory={sessionMemory}
-          boundaryStatus={boundaryStatus}
-          onResetSession={handleResetSession}
-          onOpenMemoryModal={() => setIsMemoryModalOpen(true)}
-          onOpenOutputHub={() => setIsOutputHubOpen(true)}
-          hasWatermarkAndLogic={hasWatermarkAndLogic}
-        />
-      </ErrorBoundary>
+      {/* Main Header */}
+      <Header
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        sessionMemory={sessionMemory}
+        boundaryStatus={boundaryStatus}
+        onResetSession={handleResetSession}
+        onOpenMemoryModal={() => setIsMemoryModalOpen(true)}
+        onOpenOutputHub={() => setIsOutputHubOpen(true)}
+        hasWatermarkAndLogic={hasWatermarkAndLogic}
+      />
 
       {/* Main Body */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6 space-y-6">
-        {/* Phase Boundary Membrane (Protected by ErrorBoundary) */}
-        <ErrorBoundary fallbackTitle="Phase Boundary Membrane Intercepted">
-          <PhaseBoundary
-            boundaryStatus={boundaryStatus}
-            guardReport={guardReport}
-            onInitiateMerge={handleRunGuardAudit}
-            onTriggerFeedbackLoop={handleTriggerFeedbackLoop}
-            isLoading={isLoading}
-            canMerge={hasWatermarkAndLogic}
-          />
-        </ErrorBoundary>
+        <ErrorBoundary key={activeTab} fallbackTitle="This panel hit an error">
+        {/* Phase Boundary Membrane (Always visible between steps) */}
+        <PhaseBoundary
+          boundaryStatus={boundaryStatus}
+          guardReport={guardReport}
+          onInitiateMerge={handleRunGuardAudit}
+          onTriggerFeedbackLoop={handleTriggerFeedbackLoop}
+          isLoading={isLoading}
+          canMerge={hasWatermarkAndLogic}
+        />
 
         {/* Tab 1: YouTube Ingestion & Transcripts */}
         {activeTab === 'pipeline' && (
-          <ErrorBoundary fallbackTitle="Playlist Ingestion Fault">
-            <PlaylistIngestion
-              playlist={playlist}
-              curatedPlaylists={curatedPlaylists}
-              activeVideo={activeVideo}
-              setActiveVideo={setActiveVideo}
-              onLoadCurated={handleLoadCurated}
-              onIngestUrl={handleIngestUrl}
-              onDeepTranscribe={handleDeepTranscribe}
-              transcribeProgress={transcribeProgress}
-              isLoading={isLoading}
-              onProceedToInnershell={() => setActiveTab('innershell')}
-              onProceedToKnowledge={() => setActiveTab('knowledge')}
-            />
-          </ErrorBoundary>
+          <PlaylistIngestion
+            playlist={playlist}
+            curatedPlaylists={curatedPlaylists}
+            activeVideo={activeVideo}
+            setActiveVideo={setActiveVideo}
+            onLoadCurated={handleLoadCurated}
+            onIngestUrl={handleIngestUrl}
+            onDeepTranscribe={handleDeepTranscribe}
+            transcribeProgress={transcribeProgress}
+            isLoading={isLoading}
+            onProceedToInnershell={() => setActiveTab('innershell')}
+            onProceedToKnowledge={() => setActiveTab('knowledge')}
+          />
         )}
 
         {/* Tab 2: Subjugated Knowledge Brain */}
         {activeTab === 'knowledge' && (
-          <ErrorBoundary fallbackTitle="Epistemic Knowledge Engine Fault">
-            <EpistemicKnowledgeEngine
-              playlist={playlist}
-              sessionMemory={sessionMemory}
-              onUpdateSessionMemory={(newMem) =>
-                setSessionMemory((prev) => ({
-                  ...prev,
-                  lastActive: Date.now(),
-                  memoryLattice: newMem,
-                }))
-              }
-              onInjectIntoInnershell={handleInjectKnowledgeIntoInnershell}
-            />
-          </ErrorBoundary>
+          <EpistemicKnowledgeEngine
+            playlist={playlist}
+            sessionMemory={sessionMemory}
+            onUpdateSessionMemory={(newMem) =>
+              setSessionMemory((prev) => ({
+                ...prev,
+                lastActive: Date.now(),
+                memoryLattice: newMem,
+              }))
+            }
+            onInjectIntoInnershell={handleInjectKnowledgeIntoInnershell}
+          />
         )}
 
         {/* Tab 3: RCL & SSI Innershell Body */}
         {activeTab === 'innershell' && (
-          <ErrorBoundary fallbackTitle="Innershell RCL & SSI Execution Fault">
-            <InnerShellBody
-              innershellLogic={innershellLogic}
-              rclAnalysis={rclAnalysis}
-              activeVideo={activeVideo}
-              sessionMemory={sessionMemory}
-              onUpdateSessionMemory={(newMem) =>
-                setSessionMemory((prev) => ({
-                  ...prev,
-                  lastActive: Date.now(),
-                  memoryLattice: newMem,
-                }))
-              }
-              onRunRclSsi={handleRunRclSsi}
-              isLoading={isLoading}
-              onProceedToCrypto={() => setActiveTab('crypto')}
-              lastExecutionResult={lastExecutionResult}
-              setLastExecutionResult={setLastExecutionResult}
-            />
-          </ErrorBoundary>
+          <InnerShellBody
+            innershellLogic={innershellLogic}
+            rclAnalysis={rclAnalysis}
+            activeVideo={activeVideo}
+            sessionMemory={sessionMemory}
+            onUpdateSessionMemory={(newMem) =>
+              setSessionMemory((prev) => ({
+                ...prev,
+                lastActive: Date.now(),
+                memoryLattice: newMem,
+              }))
+            }
+            onRunRclSsi={handleRunRclSsi}
+            isLoading={isLoading}
+            onProceedToCrypto={() => setActiveTab('crypto')}
+            lastExecutionResult={lastExecutionResult}
+            setLastExecutionResult={setLastExecutionResult}
+          />
         )}
 
-        {/* Tab 4: Cryptographic Watermarking & Pre-Compression Binding */}
+        {/* Tab 3: Cryptographic Watermarking & Pre-Compression Binding */}
         {activeTab === 'crypto' && (
-          <ErrorBoundary fallbackTitle="Watermarking & Compression Pipeline Fault">
-            <WatermarkPipeline
-              activeVideo={activeVideo}
-              innershellLogic={innershellLogic}
-              onWatermarkAndCompress={handleWatermarkAndCompress}
-              isLoading={isLoading}
-              onProceedToGuard={() => setActiveTab('guard')}
-            />
-          </ErrorBoundary>
+          <WatermarkPipeline
+            activeVideo={activeVideo}
+            innershellLogic={innershellLogic}
+            onWatermarkAndCompress={handleWatermarkAndCompress}
+            isLoading={isLoading}
+            onProceedToGuard={() => setActiveTab('guard')}
+          />
         )}
 
         {/* Tab 5: Second Agentic Guard Shell */}
         {activeTab === 'guard' && (
-          <ErrorBoundary fallbackTitle="Guard Shell Verification Array Fault">
-            <GuardShell
-              guardReport={guardReport}
-              guardReportBeta={guardReportBeta}
-              dualComparisonReport={dualComparisonReport}
-              activeVideo={activeVideo}
-              innershellLogic={innershellLogic}
-              lastExecutionResult={lastExecutionResult}
-              onTriggerFeedbackLoop={handleTriggerFeedbackLoop}
-              onRunAudit={handleRunGuardAudit}
-              onRunBetaAudit={handleRunBetaGuardAudit}
-              onRunDualAudit={handleRunDualGuardAudit}
-              isLoading={isLoading}
-              customGitHubGuard={customGitHubGuard}
-              setCustomGitHubGuard={setCustomGitHubGuard}
-              customGuardAuditResult={customGuardAuditResult}
-              setCustomGuardAuditResult={setCustomGuardAuditResult}
-            />
-          </ErrorBoundary>
+          <GuardShell
+            guardReport={guardReport}
+            guardReportBeta={guardReportBeta}
+            dualComparisonReport={dualComparisonReport}
+            activeVideo={activeVideo}
+            innershellLogic={innershellLogic}
+            lastExecutionResult={lastExecutionResult}
+            onTriggerFeedbackLoop={handleTriggerFeedbackLoop}
+            onRunAudit={handleRunGuardAudit}
+            onRunBetaAudit={handleRunBetaGuardAudit}
+            onRunDualAudit={handleRunDualGuardAudit}
+            isLoading={isLoading}
+            customGitHubGuard={customGitHubGuard}
+            setCustomGitHubGuard={setCustomGitHubGuard}
+            customGuardAuditResult={customGuardAuditResult}
+            setCustomGuardAuditResult={setCustomGuardAuditResult}
+          />
         )}
 
         {/* Tab 6: Replicated Parallel Shadow System (AetherTwin) */}
         {activeTab === 'twin' && (
-          <ErrorBoundary fallbackTitle="AetherTwin Parallel Shadow System Fault">
-            <AetherTwinParallel
-              innershellLogic={innershellLogic}
-              guardReport={guardReport}
-              sessionMemory={sessionMemory}
-              activeRclIterations={sessionMemory.memoryLattice.optimalRclIterations || 3}
-              onApplyOptimalRclIterations={(count) => {
-                setSessionMemory((prev) => ({
-                  ...prev,
-                  lastActive: Date.now(),
-                  memoryLattice: {
-                    ...prev.memoryLattice,
-                    optimalRclIterations: count,
-                  },
-                }));
-                showToast(`Applied optimal ${count} RCL iterations to Innershell Engine!`, 'success');
-              }}
-              onUpdateSessionMemory={(newMem) =>
-                setSessionMemory((prev) => ({
-                  ...prev,
-                  lastActive: Date.now(),
-                  memoryLattice: newMem,
-                }))
-              }
-              showToast={showToast}
-            />
-          </ErrorBoundary>
-        )}
-      </main>
-
-      {/* Persistent Multi-Session Memory Modal */}
-      <ErrorBoundary fallbackTitle="Session Memory Lattice Modal Intercepted">
-        <SessionMemoryModal
-          isOpen={isMemoryModalOpen}
-          onClose={() => setIsMemoryModalOpen(false)}
-          sessionMemory={sessionMemory}
-          onUpdateMemory={(newMem) =>
-            setSessionMemory((prev) => ({
-              ...prev,
-              lastActive: Date.now(),
-              memoryLattice: newMem,
-            }))
-          }
-          onResetSession={handleResetSession}
-        />
-      </ErrorBoundary>
-
-      {/* AetherShell Output Tool: Copy / Paste / Download Modal */}
-      <ErrorBoundary fallbackTitle="AetherShell Output Hub Modal Intercepted">
-        <AetherOutputHubModal
-          isOpen={isOutputHubOpen}
-          onClose={() => setIsOutputHubOpen(false)}
-          activeVideo={activeVideo}
-          innershellLogic={innershellLogic}
-          rclAnalysis={rclAnalysis}
-          lastExecutionResult={lastExecutionResult}
-          guardReport={guardReport}
-          sessionMemory={sessionMemory}
-          onRestoreState={({ innershellLogic: l, guardReport: g, rclAnalysis: r, memoryLattice: m }) => {
-            if (l) setInnershellLogic(l);
-            if (g) setGuardReport(g);
-            if (r) setRclAnalysis(r);
-            if (m) {
+          <AetherTwinParallel
+            innershellLogic={innershellLogic}
+            guardReport={guardReport}
+            sessionMemory={sessionMemory}
+            activeRclIterations={sessionMemory.memoryLattice.optimalRclIterations || 3}
+            onApplyOptimalRclIterations={(count) => {
               setSessionMemory((prev) => ({
                 ...prev,
                 lastActive: Date.now(),
-                memoryLattice: { ...prev.memoryLattice, ...m },
+                memoryLattice: {
+                  ...prev.memoryLattice,
+                  optimalRclIterations: count,
+                },
               }));
+              showToast(`Applied optimal ${count} RCL iterations to Innershell Engine!`, 'success');
+            }}
+            onUpdateSessionMemory={(newMem) =>
+              setSessionMemory((prev) => ({
+                ...prev,
+                lastActive: Date.now(),
+                memoryLattice: newMem,
+              }))
             }
-            if (g?.semanticAudit?.boundaryDecision === 'APPROVED') {
-              setBoundaryStatus('PASSED');
-            }
-          }}
-          showToast={showToast}
-        />
+            showToast={showToast}
+          />
+        )}
+        </ErrorBoundary>
+      </main>
+
+      {/* Persistent Multi-Session Memory Modal */}
+      <ErrorBoundary fallbackTitle="Session memory panel hit an error">
+      <SessionMemoryModal
+        isOpen={isMemoryModalOpen}
+        onClose={() => setIsMemoryModalOpen(false)}
+        sessionMemory={sessionMemory}
+        onUpdateMemory={(newMem) =>
+          setSessionMemory((prev) => ({
+            ...prev,
+            lastActive: Date.now(),
+            memoryLattice: newMem,
+          }))
+        }
+        onResetSession={handleResetSession}
+      />
+      </ErrorBoundary>
+
+      {/* AetherShell Output Tool: Copy / Paste / Download Modal */}
+      <ErrorBoundary fallbackTitle="Output hub hit an error">
+      <AetherOutputHubModal
+        playlist={playlist}
+        isOpen={isOutputHubOpen}
+        onClose={() => setIsOutputHubOpen(false)}
+        activeVideo={activeVideo}
+        innershellLogic={innershellLogic}
+        rclAnalysis={rclAnalysis}
+        lastExecutionResult={lastExecutionResult}
+        guardReport={guardReport}
+        sessionMemory={sessionMemory}
+        onRestoreState={({ innershellLogic: l, guardReport: g, rclAnalysis: r, memoryLattice: m }) => {
+          if (l) setInnershellLogic(l);
+          if (g) {
+            // Imported reports are shown for reference only and never count as a pass.
+            setGuardReport({
+              ...g,
+              passedPhaseBoundary: false,
+              semanticAudit: { ...g.semanticAudit, reasoning: `[IMPORTED, not re-verified] ${g.semanticAudit?.reasoning || ''}` },
+            });
+          }
+          if (r) setRclAnalysis(r);
+          if (m) {
+            setSessionMemory((prev) => ({
+              ...prev,
+              lastActive: Date.now(),
+              memoryLattice: { ...prev.memoryLattice, ...m },
+            }));
+          }
+          // Imported reports are display-only; a pass must come from a live guard run.
+        }}
+        showToast={showToast}
+      />
       </ErrorBoundary>
 
       {/* Footer */}

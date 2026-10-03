@@ -1,3 +1,5 @@
+import { runSandboxed } from './sandbox';
+
 // Zero-width Unicode characters used for steganography
 export const ZERO_WIDTH_CHARS = ['\u200B', '\u200C', '\u200D', '\uFEFF'];
 
@@ -36,8 +38,8 @@ export function inspectSteganographicPayload(text: string): {
   }
 }
 
-// Client-side execution sandbox for the Innershell context-aware script
-export function executeInnershellScript(
+// Runs the Innershell script in the isolated sandbox (see sandbox.ts).
+export async function executeInnershellScript(
   scriptCode: string,
   context: {
     memory: Record<string, any>;
@@ -45,86 +47,39 @@ export function executeInnershellScript(
     transcriptHash?: string;
     videoTitle?: string;
   }
-): {
+): Promise<{
   status: 'SUCCESS' | 'ERROR';
   executionTimeMs: number;
   output: any;
   logs: string[];
   mutatedMemory: Record<string, any>;
-} {
-  const startTime = performance.now();
-  const logs: string[] = [];
+}> {
+  const res = await runSandboxed(scriptCode, {
+    memory: context.memory || {},
+    ssiState: context.ssiState || {},
+    transcriptHash: context.transcriptHash || 'N/A',
+    videoTitle: context.videoTitle || '',
+  });
 
-  const mockConsole = {
-    log: (...args: any[]) => logs.push(args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')),
-    warn: (...args: any[]) => logs.push('[WARN] ' + args.join(' ')),
-    error: (...args: any[]) => logs.push('[ERR] ' + args.join(' ')),
-  };
-
-  try {
-    // Clone memory to observe mutations
-    const memoryWorkingCopy = JSON.parse(JSON.stringify(context.memory || {}));
-
-    const sandboxContext = {
-      ctx: {
-        memory: memoryWorkingCopy,
-        ssiState: context.ssiState || {},
-        transcriptHash: context.transcriptHash || 'N/A',
-        videoTitle: context.videoTitle || 'Active Video Node',
-        log: mockConsole.log,
-      },
-      console: mockConsole,
-      Date,
-      Math,
-      JSON,
-    };
-
-    // Construct a safe evaluator wrapper
-    const runner = new Function(
-      'ctx',
-      'console',
-      'Date',
-      'Math',
-      'JSON',
-      `"use strict";
-       try {
-         ${scriptCode}
-       } catch(e) {
-         throw e;
-       }`
-    );
-
-    const result = runner(
-      sandboxContext.ctx,
-      sandboxContext.console,
-      sandboxContext.Date,
-      sandboxContext.Math,
-      sandboxContext.JSON
-    );
-
-    const endTime = performance.now();
-
-    // Check if script mutated context.memory or returned a stateDelta
-    const finalMemory = { ...memoryWorkingCopy };
-    if (result && typeof result === 'object' && result.stateDelta) {
-      Object.assign(finalMemory, result.stateDelta);
-    }
-
-    return {
-      status: 'SUCCESS',
-      executionTimeMs: Math.round((endTime - startTime) * 100) / 100,
-      output: result !== undefined ? result : { message: 'Script executed with no return value' },
-      logs: logs.length > 0 ? logs : ['Execution completed cleanly with zero standard error.'],
-      mutatedMemory: finalMemory,
-    };
-  } catch (err: any) {
-    const endTime = performance.now();
+  if (!res.ok) {
     return {
       status: 'ERROR',
-      executionTimeMs: Math.round((endTime - startTime) * 100) / 100,
-      output: { error: err.message || 'Execution error' },
-      logs: [...logs, `[RUNTIME_EXCEPTION]: ${err.message}`],
+      executionTimeMs: res.timeMs,
+      output: { error: res.error || 'Execution error' },
+      logs: [...res.logs, `[RUNTIME_EXCEPTION]: ${res.error}`],
       mutatedMemory: context.memory,
     };
   }
+
+  const finalMemory = { ...(res.memory || {}) };
+  if (res.result && typeof res.result === 'object' && res.result.stateDelta && typeof res.result.stateDelta === 'object') {
+    Object.assign(finalMemory, res.result.stateDelta);
+  }
+  return {
+    status: 'SUCCESS',
+    executionTimeMs: res.timeMs,
+    output: res.result !== null ? res.result : { message: 'Script executed with no return value' },
+    logs: res.logs.length > 0 ? res.logs : ['Script produced no log output.'],
+    mutatedMemory: finalMemory,
+  };
 }

@@ -19,6 +19,8 @@ import {
   Brain,
 } from 'lucide-react';
 import { PlaylistData, VideoNode, CuratedPlaylistSummary } from '../types';
+import { VideoMetadataCard } from './VideoMetadataCard';
+import { copyText } from '../utils/clipboard';
 
 interface PlaylistIngestionProps {
   playlist: PlaylistData | null;
@@ -28,12 +30,7 @@ interface PlaylistIngestionProps {
   onLoadCurated: (id: string) => void;
   onIngestUrl: (url: string) => void;
   onDeepTranscribe: (video?: VideoNode) => void;
-  transcribeProgress?: {
-    current: number;
-    total: number;
-    currentTitle: string;
-    percent: number;
-  } | null;
+  transcribeProgress?: { current: number; total: number; currentTitle: string; percent: number } | null;
   isLoading: boolean;
   onProceedToInnershell: () => void;
   onProceedToKnowledge: () => void;
@@ -64,38 +61,9 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
 
   const handleCopyTranscript = async () => {
     if (!activeVideo?.rawTranscript) return;
-    try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(activeVideo.rawTranscript);
-      } else {
-        const ta = document.createElement('textarea');
-        ta.value = activeVideo.rawTranscript;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-      }
+    if (await copyText(activeVideo.rawTranscript)) {
       setCopiedTranscript(true);
       setTimeout(() => setCopiedTranscript(false), 2000);
-    } catch {
-      try {
-        const ta = document.createElement('textarea');
-        ta.value = activeVideo.rawTranscript;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        setCopiedTranscript(true);
-        setTimeout(() => setCopiedTranscript(false), 2000);
-      } catch (err) {
-        console.warn('Clipboard copy prevented:', err);
-      }
     }
   };
 
@@ -117,10 +85,10 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
               </span>
               <div>
                 <h2 className="text-base font-semibold text-slate-100 flex items-center gap-2">
-                  YouTube Playlist Ingestion & Audio Transcription Engine
+                  YouTube Playlist Ingestion (Caption Transcripts)
                 </h2>
                 <p className="text-xs text-slate-400">
-                  Transcribe multi-video YouTube playlists, extract grounded dialogue transcripts, and prepare for RCL/SSI synthesis.
+                  Pull caption transcripts from YouTube videos and playlists (no captions, no transcript; nothing is generated), then prepare them for RCL/SSI synthesis.
                 </p>
               </div>
             </div>
@@ -128,15 +96,20 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
 
           {/* Curated Quick-Load Presets */}
           <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
-            <span className="text-xs font-mono text-cyan-400 font-medium">Curated Presets:</span>
+            <span className="text-xs font-mono text-slate-400 font-medium">Presets:</span>
             {(curatedPlaylists || []).map((cp) => (
               <button
                 key={cp.id}
                 onClick={() => onLoadCurated(cp.id)}
                 disabled={isLoading}
-                className="px-2.5 py-1 rounded-lg text-xs font-mono bg-cyan-950/60 hover:bg-cyan-900/80 border border-cyan-800/60 text-cyan-300 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+                title={cp.isDemo ? `${cp.title} (synthetic sample text)` : `${cp.title} (fetches real captions from YouTube)`}
+                className={`px-2.5 py-1 rounded-lg text-xs font-mono border transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 ${
+                  cp.isDemo
+                    ? 'bg-amber-950/40 hover:bg-amber-900/50 border-amber-800/60 text-amber-300'
+                    : 'bg-cyan-950/60 hover:bg-cyan-900/80 border-cyan-800/60 text-cyan-300'
+                }`}
               >
-                {cp.title.slice(0, 24)}...
+                {cp.title.length > 28 ? `${cp.title.slice(0, 28)}…` : cp.title}
               </button>
             ))}
           </div>
@@ -152,7 +125,7 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
               type="text"
               value={inputUrl}
               onChange={(e) => setInputUrl(e.target.value)}
-              placeholder="Paste YouTube Playlist URL (e.g., https://www.youtube.com/playlist?list=PLHLzviV6Lxzc...)"
+              placeholder="Paste YouTube Playlist URL (e.g., https://www.youtube.com/playlist?list=...) or Video link"
               className="w-full pl-10 pr-4 py-2.5 bg-slate-900/90 border border-slate-700/80 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 font-mono transition-colors"
             />
           </div>
@@ -164,34 +137,16 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
             {isLoading ? (
               <>
                 <span className="w-3.5 h-3.5 border-2 border-slate-950 border-t-transparent rounded-full animate-spin"></span>
-                <span>Transcribing...</span>
+                <span>Fetching captions...</span>
               </>
             ) : (
               <>
                 <Sparkles className="w-4 h-4" />
-                <span>Ingest & Transcribe Playlist</span>
+                <span>Ingest Captions</span>
               </>
             )}
           </button>
         </form>
-
-        {/* Quick URL shortcut helper */}
-        <div className="mt-2.5 flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-          <span className="font-mono text-slate-500">Target Playlist:</span>
-          <button
-            type="button"
-            onClick={() => {
-              const url = 'https://youtube.com/playlist?list=PLHLzviV6Lxzc&si=IKm_ynM7XY889KVU';
-              setInputUrl(url);
-              onIngestUrl(url);
-            }}
-            disabled={isLoading}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-cyan-950/40 hover:bg-cyan-900/60 border border-cyan-800/40 text-cyan-300 transition-all font-mono hover:underline disabled:opacity-50"
-          >
-            <Youtube className="w-3.5 h-3.5 text-red-400" />
-            <span>Load PLHLzviV6Lxzc (AetherShell: IMO AI & Entropy)</span>
-          </button>
-        </div>
 
         {playlist && (
           <div className="mt-4 pt-3 border-t border-slate-800/60 flex flex-wrap items-center justify-between text-xs text-slate-400">
@@ -199,17 +154,25 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
               <span className="font-semibold text-slate-200">{playlist.title}</span>
               <span className="text-slate-500">•</span>
               <span>{playlist.videos.length} Videos Loaded</span>
+              {playlist.isDemo && (
+                <span className="px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800/60 font-mono text-[10px]">
+                  DEMO · synthetic transcripts
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => onDeepTranscribe()}
-                disabled={isLoading}
-                className="px-3 py-1 rounded-lg bg-gradient-to-r from-cyan-500/20 to-blue-500/20 hover:from-cyan-500/30 hover:to-blue-500/30 border border-cyan-500/40 text-cyan-300 font-mono text-[11px] flex items-center gap-1.5 transition-all disabled:opacity-50"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Bulk Transcribe All Videos</span>
-              </button>
+              {!playlist.isDemo && (
+                <button
+                  type="button"
+                  onClick={() => onDeepTranscribe()}
+                  disabled={isLoading}
+                  className="px-3 py-1 rounded-lg bg-cyan-950/60 hover:bg-cyan-900/80 border border-cyan-700/60 text-cyan-300 font-mono text-[11px] flex items-center gap-1.5 transition-all disabled:opacity-50"
+                  title="Fetch YouTube captions again for every video in this playlist"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Re-fetch All Captions</span>
+                </button>
+              )}
               <a
                 href={playlist.url}
                 target="_blank"
@@ -223,38 +186,24 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
           </div>
         )}
 
-        {/* Bulk Processing Progress Indicator */}
         {transcribeProgress && (
-          <div className="mt-4 p-4 rounded-xl bg-gradient-to-r from-cyan-950/90 via-slate-900/90 to-blue-950/90 border border-cyan-500/40 shadow-xl shadow-cyan-950/30 space-y-2.5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs font-mono">
-              <div className="flex items-center gap-2 text-cyan-300">
-                <span className="w-4 h-4 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin"></span>
-                <span className="font-semibold uppercase tracking-wider">
-                  Bulk Ingesting & Transcribing Playlist
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded bg-cyan-900/70 border border-cyan-700/60 text-cyan-200 font-bold">
-                  {transcribeProgress.current} / {transcribeProgress.total} Videos
-                </span>
-                <span className="text-cyan-400 font-bold">{transcribeProgress.percent}%</span>
-              </div>
+          <div className="mt-4 p-3.5 rounded-xl bg-cyan-950/40 border border-cyan-700/40 space-y-2" role="status" aria-live="polite">
+            <div className="flex items-center justify-between text-xs font-mono text-cyan-300">
+              <span className="flex items-center gap-2">
+                <span className="w-3.5 h-3.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
+                Fetching captions
+              </span>
+              <span>
+                {transcribeProgress.current} / {transcribeProgress.total} · {transcribeProgress.percent}%
+              </span>
             </div>
-
-            {/* Visual Animated Progress Bar */}
-            <div className="w-full h-2.5 rounded-full bg-slate-950 border border-slate-800 overflow-hidden">
+            <div className="w-full h-2 rounded-full bg-slate-950 border border-slate-800 overflow-hidden">
               <div
-                className="h-full bg-gradient-to-r from-cyan-500 via-sky-400 to-blue-500 transition-all duration-300 ease-out"
+                className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-300"
                 style={{ width: `${Math.max(4, transcribeProgress.percent)}%` }}
               />
             </div>
-
-            <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
-              <span className="truncate max-w-[85%] text-slate-300">
-                Active Video: <span className="text-cyan-300 font-medium">{transcribeProgress.currentTitle}</span>
-              </span>
-              <span className="text-cyan-400 font-semibold">{transcribeProgress.percent}% Complete</span>
-            </div>
+            <p className="text-[11px] font-mono text-slate-400 truncate">Current: {transcribeProgress.currentTitle}</p>
           </div>
         )}
       </div>
@@ -265,23 +214,11 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
           {/* Left Column: Playlist Video Nodes (4 cols) */}
           <div className="lg:col-span-5 space-y-3">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <h3 className="text-xs font-mono uppercase tracking-wider text-slate-400 font-semibold flex items-center gap-1.5">
-                  <Play className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Nodes ({filteredVideos.length})</span>
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => onDeepTranscribe()}
-                  disabled={isLoading}
-                  className="px-2 py-0.5 rounded bg-cyan-950/80 hover:bg-cyan-900 border border-cyan-800/60 text-cyan-300 text-[10px] font-mono flex items-center gap-1 transition-all disabled:opacity-50"
-                  title="Bulk transcribe all videos in playlist"
-                >
-                  <Sparkles className="w-3 h-3 text-cyan-400" />
-                  <span>Bulk All</span>
-                </button>
-              </div>
-              <div className="relative w-36 sm:w-44">
+              <h3 className="text-xs font-mono uppercase tracking-wider text-slate-400 font-semibold flex items-center gap-2">
+                <Play className="w-3.5 h-3.5 text-cyan-400" />
+                Playlist Nodes ({filteredVideos.length})
+              </h3>
+              <div className="relative w-44">
                 <Search className="w-3 h-3 text-slate-500 absolute left-2.5 top-2.5" />
                 <input
                   type="text"
@@ -294,71 +231,16 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
             </div>
 
             <div className="space-y-2.5 max-h-[640px] overflow-y-auto pr-1">
-              {filteredVideos.map((video, idx) => {
-                const isActive = activeVideo?.id === video.id;
-                const hasSegments = (video.segments?.length || 0) > 0;
-                const isWatermarked = !!video.watermark;
-                const isCompressed = !!video.compressedTranscript;
-
-                return (
-                  <div
-                    key={video.id}
-                    onClick={() => setActiveVideo(video)}
-                    className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
-                      isActive
-                        ? 'bg-cyan-950/40 border-cyan-500/60 shadow-md shadow-cyan-950/30'
-                        : 'bg-slate-900/70 border-slate-800/80 hover:bg-slate-850 hover:border-slate-700'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="flex items-center justify-center w-6 h-6 rounded-md bg-slate-800 font-mono text-[11px] text-cyan-400 font-bold">
-                          {String(idx + 1).padStart(2, '0')}
-                        </span>
-                        <h4 className="text-xs font-medium text-slate-200 line-clamp-1">
-                          {video.title}
-                        </h4>
-                      </div>
-                      <span className="text-[11px] font-mono text-slate-400 flex items-center gap-1 shrink-0">
-                        <Clock className="w-3 h-3 text-slate-500" />
-                        {video.duration}
-                      </span>
-                    </div>
-
-                    <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
-                      <span className="truncate max-w-[160px] text-slate-400 font-mono">
-                        {video.channel}
-                      </span>
-                      <div className="flex items-center gap-1.5 font-mono text-[10px]">
-                        {hasSegments ? (
-                          <span className="px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-800/50 flex items-center gap-1">
-                            <CheckCircle2 className="w-2.5 h-2.5" />
-                            {video.segments?.length} Segs
-                          </span>
-                        ) : (
-                          <span className="px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-800/50">
-                            No Segs
-                          </span>
-                        )}
-
-                        {isWatermarked && (
-                          <span className="px-1.5 py-0.5 rounded bg-cyan-950/80 text-cyan-300 border border-cyan-800/50 flex items-center gap-1">
-                            <ShieldCheck className="w-2.5 h-2.5" />
-                            WM
-                          </span>
-                        )}
-
-                        {isCompressed && (
-                          <span className="px-1.5 py-0.5 rounded bg-indigo-950/80 text-indigo-300 border border-indigo-800/50 flex items-center gap-1">
-                            <Minimize2 className="w-2.5 h-2.5" />
-                            -{video.compressedTranscript?.compressionRatioPercent}%
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+              {filteredVideos.map((video) => (
+                <VideoMetadataCard
+                  key={video.id}
+                  video={video}
+                  index={(playlist?.videos || []).indexOf(video)}
+                  isActive={activeVideo?.id === video.id}
+                  isDemo={!!playlist?.isDemo}
+                  onSelect={setActiveVideo}
+                />
+              ))}
             </div>
           </div>
 
@@ -383,21 +265,12 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => onDeepTranscribe(activeVideo)}
-                      disabled={isLoading}
-                      className="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-cyan-950 to-blue-950 hover:from-cyan-900 hover:to-blue-900 border border-cyan-600/60 text-cyan-300 text-xs font-mono flex items-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 shadow-sm"
-                      title="Bulk transcribe all videos in playlist with Gemini"
+                      disabled={isLoading || !!playlist?.isDemo}
+                      className="px-3 py-1.5 rounded-lg bg-cyan-950 hover:bg-cyan-900 border border-cyan-700/60 text-cyan-300 text-xs font-mono flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                      title={playlist?.isDemo ? 'Demo videos are not real YouTube videos' : 'Fetch this video\'s caption track from YouTube again'}
                     >
-                      {transcribeProgress ? (
-                        <>
-                          <span className="w-3.5 h-3.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-                          <span>Processing ({transcribeProgress.current}/{transcribeProgress.total})...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                          <span>Bulk Transcribe Playlist</span>
-                        </>
-                      )}
+                      <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Re-fetch Captions</span>
                     </button>
 
                     <button
@@ -449,9 +322,11 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
                 ) : (
                   <div className="p-6 text-center rounded-xl bg-slate-950/60 border border-dashed border-slate-800">
                     <AlertCircle className="w-6 h-6 text-amber-400 mx-auto mb-2" />
-                    <p className="text-xs text-slate-300 font-medium">No segments generated yet</p>
+                    <p className="text-xs text-slate-300 font-medium">No transcript for this video</p>
                     <p className="text-[11px] text-slate-500 mt-1">
-                      Click "Transcribe with Gemini" to extract structured speech segments and timestamps.
+                      {activeVideo.transcriptError
+                        ? `YouTube returned no captions: ${activeVideo.transcriptError}`
+                        : 'Click "Re-fetch Captions" to try the YouTube caption track again.'}
                     </p>
                   </div>
                 )}

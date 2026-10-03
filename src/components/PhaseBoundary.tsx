@@ -98,41 +98,31 @@ export const PhaseBoundary: React.FC<PhaseBoundaryProps> = ({
         {/* Center: Real-Time Telemetry Gauges */}
         <div className="flex flex-wrap items-center gap-4 text-xs font-mono">
           <div className="px-3 py-2 rounded-xl bg-slate-950/80 border border-slate-800 space-y-0.5">
-            <span className="text-[10px] text-slate-500 block">TRII Two-Stage Parity:</span>
+            <span className="text-[10px] text-slate-500 block">Guard Result:</span>
             <span
               className={`text-sm font-bold ${
-                guardReport?.multiGuardTelemetry?.triiVerificationCondition?.isAlignmentValid ?? true
-                  ? 'text-emerald-400'
-                  : 'text-rose-400'
+                !guardReport ? 'text-slate-400' : guardReport.passedPhaseBoundary ? 'text-emerald-400' : 'text-rose-400'
               }`}
             >
-              {guardReport?.multiGuardTelemetry?.triiVerificationCondition?.isAlignmentValid ?? true
-                ? 'PROVEN (δ ≤ ε ∧ H_par)'
-                : 'QUARANTINED'}
+              {!guardReport ? 'NOT RUN' : guardReport.passedPhaseBoundary ? 'ALL CHECKS PASSED' : 'FAILED'}
             </span>
           </div>
 
           <div className="px-3 py-2 rounded-xl bg-slate-950/80 border border-slate-800 space-y-0.5">
-            <span className="text-[10px] text-slate-500 block">Multi-Guard Quorum:</span>
+            <span className="text-[10px] text-slate-500 block">Checks Passed:</span>
             <span className="text-sm font-bold text-cyan-400">
-              {guardReport?.multiGuardTelemetry?.consensusSummary?.passCount ?? 3} / 3 Active Guards
+              {guardReport?.multiGuardTelemetry?.consensusSummary
+                ? `${guardReport.multiGuardTelemetry.consensusSummary.passCount} / ${guardReport.multiGuardTelemetry.consensusSummary.totalActiveGuards}`
+                : '—'}
             </span>
           </div>
 
           <div className="px-3 py-2 rounded-xl bg-slate-950/80 border border-slate-800 space-y-0.5">
-            <span className="text-[10px] text-slate-500 block">Data Degradation:</span>
-            <span
-              className={`text-sm font-bold ${
-                guardReport?.semanticAudit?.dataDegradationIndex !== undefined
-                  ? guardReport.semanticAudit.dataDegradationIndex <= 0.05
-                    ? 'text-emerald-400'
-                    : 'text-rose-400'
-                  : 'text-slate-400'
-              }`}
-            >
-              {guardReport?.semanticAudit?.dataDegradationIndex !== undefined
-                ? `${(guardReport.semanticAudit.dataDegradationIndex * 100).toFixed(1)}% Drift`
-                : 'CALCULATING'}
+            <span className="text-[10px] text-slate-500 block">Grounded Words:</span>
+            <span className="text-sm font-bold text-slate-300">
+              {guardReport?.multiGuardTelemetry?.guard2SemanticAuditor
+                ? `${guardReport.multiGuardTelemetry.guard2SemanticAuditor.citationCoveragePercent}%`
+                : '—'}
             </span>
           </div>
         </div>

@@ -533,8 +533,20 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
                       >
                         <div className="flex items-center justify-between text-[11px] font-mono text-cyan-400">
                           <span>{cite.videoTitle}</span>
-                          <span className="px-2 py-0.5 rounded bg-slate-900 text-slate-400 text-[10px]">
-                            {cite.timestamp}
+                          <span className="flex items-center gap-1.5">
+                            {cite.quoteVerified !== undefined && (
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] ${
+                                  cite.quoteVerified ? 'bg-emerald-950 text-emerald-300' : 'bg-rose-950 text-rose-300'
+                                }`}
+                                title="Checked server-side against the transcript text"
+                              >
+                                {cite.quoteVerified ? 'quote found' : 'quote NOT in transcript'}
+                              </span>
+                            )}
+                            <span className="px-2 py-0.5 rounded bg-slate-900 text-slate-400 text-[10px]">
+                              {cite.timestamp}
+                            </span>
                           </span>
                         </div>
                         <p className="text-[11px] text-slate-400 italic font-sans leading-relaxed">

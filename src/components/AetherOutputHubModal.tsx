@@ -18,7 +18,11 @@ import {
   ExternalLink,
   Code2,
   FileDown,
+  ListVideo,
 } from 'lucide-react';
+import { buildPlaylistExport } from '../utils/playlistExport';
+import { fetchSignerPublicKey } from '../services/api';
+import { copyText } from '../utils/clipboard';
 import {
   InnershellLogic,
   RclAnalysis,
@@ -26,10 +30,12 @@ import {
   GuardAuditReport,
   VideoNode,
   PersistentSessionMemory,
+  PlaylistData,
 } from '../types';
 
 interface AetherOutputHubModalProps {
   isOpen: boolean;
+  playlist: PlaylistData | null;
   onClose: () => void;
   activeVideo: VideoNode | null;
   innershellLogic: InnershellLogic | null;
@@ -48,6 +54,7 @@ interface AetherOutputHubModalProps {
 
 export const AetherOutputHubModal: React.FC<AetherOutputHubModalProps> = ({
   isOpen,
+  playlist,
   onClose,
   activeVideo,
   innershellLogic,
@@ -62,6 +69,16 @@ export const AetherOutputHubModal: React.FC<AetherOutputHubModalProps> = ({
   const [activeMode, setActiveMode] = useState<'copy' | 'download' | 'paste'>('download');
   const [formatType, setFormatType] = useState<'bundle_json' | 'markdown_report' | 'executable_js' | 'proof_cert' | 'pdf_document'>('bundle_json');
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isExportingPlaylist, setIsExportingPlaylist] = useState(false);
+
+  const playlistStats = useMemo(() => {
+    const videos = playlist?.videos || [];
+    return {
+      total: videos.length,
+      signed: videos.filter((v) => v.watermark?.signature && v.boundLogic).length,
+      compressed: videos.filter((v) => v.compressedTranscript).length,
+    };
+  }, [playlist]);
 
   // Copy Feedback
   const [copiedFormat, setCopiedFormat] = useState<string | null>(null);
@@ -110,8 +127,8 @@ export const AetherOutputHubModal: React.FC<AetherOutputHubModalProps> = ({
     const title = activeVideo?.title || 'YouTube Ingestion Series';
     const logicSummary = innershellLogic?.summary || 'No innershell logic synthesized yet.';
     const decision = guardReport?.semanticAudit.boundaryDecision || 'PENDING';
-    const alignment = guardReport?.semanticAudit.alignmentScore ?? 95;
-    const triiStatus = guardReport?.multiGuardTelemetry?.triiVerificationCondition?.isAlignmentValid ? 'PROVEN' : 'AUDITED';
+    const alignment = guardReport ? `${guardReport.semanticAudit.alignmentScore}%` : 'n/a';
+    const triiStatus = !guardReport ? 'NOT RUN' : guardReport.passedPhaseBoundary ? 'PASSED' : 'FAILED';
 
     const steps = (innershellLogic?.workflowSteps || [])
       .map((s) => `### Step ${s.step}: ${s.action}\n${s.description}\n`)
@@ -124,8 +141,8 @@ export const AetherOutputHubModal: React.FC<AetherOutputHubModalProps> = ({
     return `# AetherShell Epistemic Execution & Verification Dossier
 **Generated:** ${new Date().toUTCString()}  
 **Video Ground Truth:** ${title}  
-**Phase Boundary Status:** \`${decision}\` | **Alignment Score:** \`${alignment}%\`  
-**TRII Two-Stage Parity:** \`${triiStatus}\`  
+**Model Decision:** \`${decision}\` | **Model Alignment Score:** \`${alignment}\`  
+**Guard Result (all checks):** \`${triiStatus}\`  
 
 ---
 
@@ -140,27 +157,62 @@ ${steps || '_No discrete steps synthesized._'}
 ---
 
 ## 3. Extracted Reflexive Invariants (RCL/SSI Engine)
-${invariants || '- Invariant Order 0: Strict Epistemic Subjugation to Transcript Corpus\n- Invariant Order 2: Pre-Compression HMAC Signature Anchoring'}
+${invariants || '_No invariants synthesized._'}
 
 ---
 
-## 4. Multi-Guard Shell Verification Array Telemetry
-- **Guard 1 (Channel Integrity Sentinel):** ${guardReport?.multiGuardTelemetry?.guard1ChannelSentinel?.status || 'PASS'}
-  - Evidence: ${guardReport?.multiGuardTelemetry?.guard1ChannelSentinel?.evidence || 'Compression-Integrity Lemma satisfied: H(D(C(Ls))) = H(Ls)'}
-- **Guard 2 (Semantic Anti-Drift Auditor):** ${guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.status || 'PASS'}
-  - Semantic Distance: δ(Ls, T) = ${guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.semanticDistanceDelta || '0.012'} ≤ ε (0.050)
-- **Guard 3 (Formal Hoare-Safety Oracle):** ${guardReport?.multiGuardTelemetry?.guard3FormalOracle?.status || 'PASS'}
-  - Lyapunov Energy Residual: V(x) = ${guardReport?.multiGuardTelemetry?.guard3FormalOracle?.lyapunovResidual || '0.012'} ≤ 0.05
+## 4. Guard Checks
+${guardReport
+  ? [
+      guardReport.multiGuardTelemetry?.guard1ChannelSentinel,
+      guardReport.multiGuardTelemetry?.guard2SemanticAuditor,
+      guardReport.multiGuardTelemetry?.guard3FormalOracle,
+    ]
+      .filter(Boolean)
+      .map((g: any) => `- **${g.name}:** ${g.status}\n  - ${g.evidence}`)
+      .join('\n')
+  : '_Guard Shell not run._'}
 
 ---
 
-## 5. Mathematical TRII Formulation
-$$\\text{Action } A \\text{ is Alignment-Valid} \\iff [ H(A) = H(L_s) ] \\land [ \\delta(A, T) \\le \\varepsilon ]$$
+## 5. Provenance
+- Transcript SHA-256: \`${activeVideo?.watermark?.manifest?.transcriptSha256 || 'not signed'}\`
+- Logic SHA-256: \`${activeVideo?.watermark?.manifest?.logicSha256 || 'not signed'}\`
+- Ed25519 signature: \`${activeVideo?.watermark?.signature || 'none'}\`
+- Signer key fingerprint: \`${activeVideo?.watermark?.publicKeyFingerprint || 'n/a'}\` (public key: GET /api/crypto/public-key)
 
 ---
-*Signed by AetherShell Phase Boundary Sentinel (HMAC-SHA256 Canonical Binding)*
+*This report is a convenience export. Verify the signature against the server's public key; the text of this file is not itself signed.*
 `;
   }, [activeVideo, innershellLogic, rclAnalysis, guardReport]);
+
+  // Honest summary values shared by the text and PDF dossiers.
+  const dossier = useMemo(() => {
+    const g = guardReport?.multiGuardTelemetry;
+    const verdict = !guardReport ? 'NOT RUN' : guardReport.passedPhaseBoundary ? 'PASSED (all checks)' : 'FAILED';
+    const modelScore = !guardReport ? 'n/a' : guardReport.llmAvailable === false ? 'model unavailable' : `${guardReport.semanticAudit?.alignmentScore}%`;
+    const wm = activeVideo?.watermark;
+    const checks = guardReport
+      ? [g?.guard1ChannelSentinel, g?.guard2SemanticAuditor, g?.guard3FormalOracle]
+          .filter(Boolean)
+          .map((c: any) => ({ name: c.name as string, status: c.status as string, desc: c.evidence as string }))
+      : [];
+    return {
+      verdict,
+      modelScore,
+      watermarkId: wm?.watermarkId || 'not signed',
+      transcriptSha256: wm?.manifest?.transcriptSha256 || wm?.transcriptHash || 'not signed',
+      logicSha256: wm?.manifest?.logicSha256 || 'not signed',
+      signature: wm?.signature || 'not signed',
+      signer: wm?.publicKeyFingerprint || 'n/a',
+      signatureStatus: guardReport?.watermarkSignatureStatus || 'NOT VERIFIED (guard not run)',
+      decompression: !guardReport ? 'not checked' : guardReport.decompressionStatus ? 'byte-identical' : 'FAILED',
+      grounding: g?.guard2SemanticAuditor
+        ? `δ = ${g.guard2SemanticAuditor.semanticDistanceDelta} (limit ${g.guard2SemanticAuditor.epsilonThreshold})`
+        : 'not measured',
+      checks,
+    };
+  }, [activeVideo, guardReport]);
 
   const executableJs = useMemo(() => {
     return innershellLogic?.executableScript || '// No executable script currently synthesized in Innershell Body.';
@@ -176,9 +228,11 @@ $$\\text{Action } A \\text{ is Alignment-Valid} \\iff [ H(A) = H(L_s) ] \\land [
         multiGuardConsensus: guardReport?.multiGuardTelemetry || null,
         triiTwoStageProof: {
           formula: 'Valid(A) <=> (H(A) = H(Ls)) ^ (delta(A, T) <= epsilon)',
-          isAlignmentValid: guardReport?.multiGuardTelemetry?.triiVerificationCondition?.isAlignmentValid ?? true,
-          channelDrift: 0.0,
-          synthesisDrift: guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.semanticDistanceDelta ?? 0.012,
+          isAlignmentValid: guardReport?.passedPhaseBoundary ?? null,
+          signatureStatus: guardReport?.watermarkSignatureStatus ?? null,
+          groundingDistance: guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.semanticDistanceDelta ?? null,
+          groundingLimit: guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.epsilonThreshold ?? null,
+          note: 'Re-verify with POST /api/engine/guard-validate; this JSON is not self-authenticating.',
         },
       },
       null,
@@ -197,55 +251,49 @@ $$\\text{Action } A \\text{ is Alignment-Valid} \\iff [ H(A) = H(L_s) ] \\land [
         return proofCertJson;
       case 'pdf_document':
         return `================================================================================
-AETHERSHELL • SYNTHESIZED INNERSHELL LOGIC & TRANSCRIPT DOSSIER
-Dual-Shell RCL/SSI Logic Synthesis • Direct Transcript Grounding • Cryptographic Watermark Verification
+AETHERSHELL • INNERSHELL LOGIC & TRANSCRIPT DOSSIER
 ================================================================================
-TARGET VIDEO:           ${activeVideo?.title || 'YouTube Playlist Ingestion'}
-CHANNEL / CREATOR:      ${activeVideo?.channel || 'YouTube Ingestion'}
-DURATION:               ${activeVideo?.duration || 'Full Session'}
+TARGET VIDEO:           ${activeVideo?.title || 'none selected'}
+CHANNEL / CREATOR:      ${activeVideo?.channel || 'unknown'}
+DURATION:               ${activeVideo?.duration || 'unknown'}
 EXPORTED AT:            ${new Date().toUTCString()}
-PHASE BOUNDARY VERDICT: ${guardReport?.semanticAudit.boundaryDecision || 'APPROVED'}
-ALIGNMENT SCORE:        ${guardReport?.semanticAudit.alignmentScore ?? 98}%
-ACTIVE SESSION ID:      ${sessionMemory?.sessionId || 'SESSION-DEFAULT'}
+GUARD RESULT:           ${dossier.verdict}
+MODEL ALIGNMENT SCORE:  ${dossier.modelScore}
+ACTIVE SESSION ID:      ${sessionMemory?.sessionId || 'n/a'}
 
 --------------------------------------------------------------------------------
-1. CRYPTOGRAPHIC WATERMARK & PHASE MEMBRANE METADATA
+1. PROVENANCE (Ed25519-signed manifest)
 --------------------------------------------------------------------------------
-Watermark Identifier:    ${activeVideo?.watermark?.watermarkId || 'WM-AETHERSHELL-CANONICAL-SHA256'}
-Transcript HMAC-SHA256:  ${activeVideo?.watermark?.transcriptHash || 'E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855'}
-Signed Logic Signature:  ${activeVideo?.watermark?.signedLogicHash || 'SIG-HMAC256-PRECOMPRESSION-BOUND'}
-Watermark Seal Status:   ${guardReport?.watermarkSignatureStatus || 'VERIFIED'} (Signed Prior to Compression)
-Decompression Lemma:     ${guardReport?.decompressionStatus ? 'MATCH (Compression Lemma Verified)' : 'VERIFIED'}
-Semantic Divergence:     delta(Ls, T) = ${guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.semanticDistanceDelta ?? 0.012} <= epsilon (0.050)
+Watermark Identifier:    ${dossier.watermarkId}
+Transcript SHA-256:      ${dossier.transcriptSha256}
+Logic SHA-256:           ${dossier.logicSha256}
+Ed25519 Signature:       ${dossier.signature}
+Signer Key Fingerprint:  ${dossier.signer}
+Signature Check:         ${dossier.signatureStatus}
+Decompression Check:     ${dossier.decompression}
+Lexical Grounding:       ${dossier.grounding}
 
 --------------------------------------------------------------------------------
 2. SYNTHESIZED INNERSHELL LOGIC (RCL & SSI ENGINE)
 --------------------------------------------------------------------------------
-Logic Identifier:  ${innershellLogic?.logicId || 'LOGIC-CANONICAL-DEFAULT'}
-Executive Summary: ${innershellLogic?.summary || 'No summary available.'}
+Logic Identifier:  ${innershellLogic?.logicId || 'none synthesized'}
+Summary:           ${innershellLogic?.summary || 'No summary available.'}
 
 Workflow Steps:
-${(innershellLogic?.workflowSteps || []).map((s) => `  [Step ${s.step}] ${s.action}\n  ${s.description}`).join('\n\n')}
+${(innershellLogic?.workflowSteps || []).map((s) => `  [Step ${s.step}] ${s.action}\n  ${s.description}`).join('\n\n') || '  (none)'}
 
-Extracted Reflexive Invariants:
-${(rclAnalysis?.extractedInvariants || [
-  'Invariant Order 0: Strict Epistemic Subjugation to Transcript Corpus',
-  'Invariant Order 1: Pre-Compression HMAC Signature Binding Intact',
-  'Invariant Order 2: Asymptotic Stability under Lyapunov Bound V(x) <= 0.050',
-]).map((inv) => `  * ${inv}`).join('\n')}
+Extracted Invariants:
+${(rclAnalysis?.extractedInvariants || []).map((inv) => `  * ${inv}`).join('\n') || '  (none)'}
 
 --------------------------------------------------------------------------------
-3. DIRECT TRANSCRIPT CORPUS (UNCOMPRESSED GROUND TRUTH ANCHOR)
+3. DIRECT TRANSCRIPT
 --------------------------------------------------------------------------------
-${activeVideo?.rawTranscript?.trim() || 'No uncompressed transcript loaded for active session.'}
+${activeVideo?.rawTranscript?.trim() || 'No transcript loaded.'}
 
 --------------------------------------------------------------------------------
-4. MULTI-GUARD SHELL VERIFICATION ARRAY TELEMETRY
+4. GUARD CHECKS
 --------------------------------------------------------------------------------
-- Guard 1 (Channel Integrity): ${guardReport?.multiGuardTelemetry?.guard1ChannelSentinel?.status || 'PASS'}
-- Guard 2 (Semantic Anti-Drift): delta = ${guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.semanticDistanceDelta ?? 0.012} <= 0.050
-- Guard 3 (Formal Hoare Oracle): V(x) = ${guardReport?.multiGuardTelemetry?.guard3FormalOracle?.lyapunovResidual ?? 0.012} <= 0.050
-- Guard Shell Beta (Adversarial Sentinel): PASS (Zero phrase topology leakage)
+${dossier.checks.map((c) => `- ${c.name}: ${c.status}\n  ${c.desc}`).join('\n') || '- Guard Shell not run.'}
 ================================================================================`;
       case 'bundle_json':
       default:
@@ -257,38 +305,12 @@ ${activeVideo?.rawTranscript?.trim() || 'No uncompressed transcript loaded for a
   const handleCopyContent = async (customText?: string, label?: string) => {
     const textToCopy = customText || activeContent;
     const key = label || formatType;
-    try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(textToCopy);
-      } else {
-        const ta = document.createElement('textarea');
-        ta.value = textToCopy;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-      }
+    if (await copyText(textToCopy)) {
       setCopiedFormat(key);
       showToast(`Copied ${key.replace(/_/g, ' ')} to clipboard! (${textToCopy.length.toLocaleString()} chars)`, 'success');
       setTimeout(() => setCopiedFormat(null), 2500);
-    } catch {
-      try {
-        const ta = document.createElement('textarea');
-        ta.value = textToCopy;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        setCopiedFormat(key);
-        showToast(`Copied ${key.replace(/_/g, ' ')} to clipboard!`, 'success');
-        setTimeout(() => setCopiedFormat(null), 2500);
-      } catch (err: any) {
-        showToast(`Clipboard copy failed: ${err.message || 'Permission denied'}`, 'error');
-      }
+    } else {
+      showToast('Clipboard copy failed (permission denied)', 'error');
     }
   };
 
@@ -307,6 +329,37 @@ ${activeVideo?.rawTranscript?.trim() || 'No uncompressed transcript loaded for a
   };
 
   // Handle Formatted PDF Export (Innershell Logic, Transcripts, Watermark Metadata)
+  // Every video in the playlist: compressed transcript + the logic signed with it.
+  const handleExportPlaylist = async () => {
+    if (!playlist || playlist.videos.length === 0) {
+      showToast('No playlist loaded', 'error');
+      return;
+    }
+    setIsExportingPlaylist(true);
+    try {
+      let signer = null;
+      let signerError: string | null = null;
+      try {
+        signer = await fetchSignerPublicKey();
+      } catch (e: any) {
+        signerError = e?.message || 'Public key unavailable';
+      }
+      const bundle = await buildPlaylistExport(playlist, { currentLogic: innershellLogic, signer, signerError });
+      const safeName = (playlist.title || 'playlist').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, 40).toLowerCase();
+      handleDownloadFile(JSON.stringify(bundle, null, 2), `aethershell-${safeName || 'playlist'}-${Date.now().toString(36)}.json`, 'application/json');
+      const { signed, videos, logicHashMismatches } = bundle.summary;
+      showToast(
+        `Exported ${videos} video(s): ${signed} signed with logic, ${videos - signed} not yet signed` +
+          (logicHashMismatches ? `, ${logicHashMismatches} logic hash mismatch(es)` : ''),
+        logicHashMismatches ? 'error' : signed === videos ? 'success' : 'info'
+      );
+    } catch (e: any) {
+      showToast(`Playlist export failed: ${e?.message || e}`, 'error');
+    } finally {
+      setIsExportingPlaylist(false);
+    }
+  };
+
   const handleExportPdf = () => {
     setIsExportingPdf(true);
     try {
@@ -374,7 +427,7 @@ ${activeVideo?.rawTranscript?.trim() || 'No uncompressed transcript loaded for a
       doc.setFontSize(7.5);
       doc.setTextColor(71, 85, 105);
       doc.text(`Channel: ${activeVideo?.channel || 'YouTube Ingestion'} | Duration: ${activeVideo?.duration || 'Full Session'} | Exported: ${new Date().toUTCString()}`, margin + 4, y + 10.5);
-      doc.text(`Phase Boundary Decision: ${guardReport?.semanticAudit.boundaryDecision || 'APPROVED'} | Alignment Score: ${guardReport?.semanticAudit.alignmentScore ?? 98}% | System: AetherShell v2.5`, margin + 4, y + 15.5);
+      doc.text(`Guard Result: ${dossier.verdict} | Model Alignment Score: ${dossier.modelScore}`, margin + 4, y + 15.5);
       doc.text(`Active Session ID: ${sessionMemory?.sessionId || 'SESSION-DEFAULT'}`, margin + 4, y + 20);
       y += 28;
 
@@ -393,19 +446,12 @@ ${activeVideo?.rawTranscript?.trim() || 'No uncompressed transcript loaded for a
       doc.setFontSize(7.5);
       doc.setTextColor(30, 41, 59);
 
-      const wmId = activeVideo?.watermark?.watermarkId || 'WM-AETHERSHELL-CANONICAL-SHA256';
-      const txHash = activeVideo?.watermark?.transcriptHash || guardReport?.cryptographicDetails?.expectedTranscriptHash || 'E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855';
-      const logicSig = activeVideo?.watermark?.signedLogicHash || guardReport?.cryptographicDetails?.computedLogicSig || 'SIG-HMAC256-PRECOMPRESSION-BOUND';
-      const wmStatus = guardReport?.watermarkSignatureStatus || 'VERIFIED';
-      const decompStatus = guardReport?.decompressionStatus ? 'MATCH (Compression Lemma Verified)' : 'VERIFIED';
-      const delta = guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.semanticDistanceDelta ?? 0.012;
-
-      doc.text(`Watermark Identifier:    ${wmId}`, margin + 4, y + 12);
-      doc.text(`Transcript HMAC-SHA256:  ${txHash}`, margin + 4, y + 16);
-      doc.text(`Signed Logic Signature:  ${logicSig}`, margin + 4, y + 20);
-      doc.text(`Watermark Seal Status:   ${wmStatus} (Signed Prior to Compression)`, margin + 4, y + 24);
-      doc.text(`Decompression Lemma:     ${decompStatus}`, margin + 4, y + 28);
-      doc.text(`Semantic Divergence:     delta(Ls, T) = ${delta} <= epsilon (0.050) [Zero Data Degradation]`, margin + 4, y + 32);
+      doc.text(`Watermark Identifier:  ${dossier.watermarkId}`, margin + 4, y + 12);
+      doc.text(`Transcript SHA-256:    ${dossier.transcriptSha256}`, margin + 4, y + 16);
+      doc.text(`Logic SHA-256:         ${dossier.logicSha256}`, margin + 4, y + 20);
+      doc.text(`Signature Check:       ${dossier.signatureStatus} (signer ${dossier.signer})`, margin + 4, y + 24);
+      doc.text(`Decompression Check:   ${dossier.decompression}`, margin + 4, y + 28);
+      doc.text(`Lexical Grounding:     ${dossier.grounding}`, margin + 4, y + 32);
       y += 39;
 
       // SECTION 2: SYNTHESIZED INNERSHELL LOGIC (RCL / SSI)
@@ -419,7 +465,7 @@ ${activeVideo?.rawTranscript?.trim() || 'No uncompressed transcript loaded for a
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8.5);
       doc.setTextColor(51, 65, 85);
-      doc.text(`Logic ID: ${innershellLogic?.logicId || 'LOGIC-CANONICAL-DEFAULT'}`, margin, y);
+      doc.text(`Logic ID: ${innershellLogic?.logicId || 'none synthesized'}`, margin, y);
       y += 4.5;
 
       doc.setFont('helvetica', 'normal');
@@ -472,11 +518,7 @@ ${activeVideo?.rawTranscript?.trim() || 'No uncompressed transcript loaded for a
       doc.text('Extracted Reflexive Invariants (SOTA Induction):', margin, y);
       y += 4.5;
 
-      const invariants = rclAnalysis?.extractedInvariants || [
-        'Invariant Order 0: Strict Epistemic Subjugation to Transcript Corpus',
-        'Invariant Order 1: Pre-Compression HMAC Signature Binding Intact',
-        'Invariant Order 2: Asymptotic Stability under Lyapunov Bound V(x) <= 0.050',
-      ];
+      const invariants = rclAnalysis?.extractedInvariants?.length ? rclAnalysis.extractedInvariants : ['(none synthesized)'];
       invariants.forEach((inv) => {
         checkPageBreak(7);
         doc.setFont('helvetica', 'normal');
@@ -539,28 +581,9 @@ ${activeVideo?.rawTranscript?.trim() || 'No uncompressed transcript loaded for a
       doc.text('4. Multi-Guard Shell Verification Array Telemetry', margin, y);
       y += 4.5;
 
-      const guardItems = [
-        {
-          name: 'Guard 1: Channel Integrity Sentinel',
-          status: guardReport?.multiGuardTelemetry?.guard1ChannelSentinel?.status || 'PASS',
-          desc: 'Verified Compression-Integrity Lemma H(D(C(Ls))) = H(Ls). Pre-compression signature match confirmed.',
-        },
-        {
-          name: 'Guard 2: Semantic Anti-Drift Auditor',
-          status: guardReport?.multiGuardTelemetry?.guard2SemanticAuditor?.status || 'PASS',
-          desc: `Semantic divergence delta = ${delta} <= 0.050. Zero hallucination detected relative to direct transcript.`,
-        },
-        {
-          name: 'Guard 3: Formal Hoare-Safety Oracle',
-          status: guardReport?.multiGuardTelemetry?.guard3FormalOracle?.status || 'PASS',
-          desc: 'Lyapunov residual V(x) <= 0.050 satisfied. State mutations remain contractive and safe.',
-        },
-        {
-          name: 'Guard Shell Beta: Independent Adversarial Sentinel',
-          status: 'PASS',
-          desc: 'Secondary independent sentinel confirmed zero phrase topology leakage and strict negative constraint enforcement.',
-        },
-      ];
+      const guardItems = dossier.checks.length
+        ? dossier.checks
+        : [{ name: 'Guard Shell', status: 'NOT RUN', desc: 'No guard report for this video yet.' }];
 
       guardItems.forEach((g) => {
         checkPageBreak(11);
@@ -587,7 +610,7 @@ ${activeVideo?.rawTranscript?.trim() || 'No uncompressed transcript loaded for a
         doc.setTextColor(148, 163, 184); // slate-400
         doc.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pageHeight - 8, { align: 'center' });
         doc.text('AetherShell Autonomous Verification Dossier • Confidential', margin, pageHeight - 8);
-        doc.text('Cryptographically Sealed', pageWidth - margin, pageHeight - 8, { align: 'right' });
+        doc.text('Verify signature: GET /api/crypto/public-key', pageWidth - margin, pageHeight - 8, { align: 'right' });
       }
 
       // Download PDF
@@ -678,32 +701,32 @@ ${activeVideo?.rawTranscript?.trim() || 'No uncompressed transcript loaded for a
     const sample = {
       exportedAt: new Date().toISOString(),
       innershellLogic: {
-        logicId: 'INFERRED-LOGIC-CANONICAL-V2',
+        logicId: 'SAMPLE-LOGIC (illustrative, not a real run)',
         summary: 'Synthesized Autonomous Dual-Shell Execution Architecture with TRII Invariant Induction.',
         workflowSteps: [
           { step: 1, action: 'Ingest Direct Transcript Stream', description: 'Acquire raw uncompressed audio segments as immutable ground truth.' },
-          { step: 2, action: 'Compute HMAC-SHA256 Logic Watermark', description: 'Authenticate synthesized logic prior to Brotli compression.' },
-          { step: 3, action: 'Multi-Guard Shell Consensus Audit', description: 'Evaluate Channel Parity H(D(C(Ls))) and Semantic Divergence delta <= 0.05.' }
+          { step: 2, action: 'Sign Transcript And Logic', description: 'Ed25519-sign the SHA-256 hashes of transcript and logic before DEFLATE compression.' },
+          { step: 3, action: 'Run Guard Shell', description: 'Verify signature and decompression, measure lexical grounding, request model review.' }
         ],
-        executableScript: 'console.log("AetherShell Canonical Logic Executing...");\nconst delta = 0.012;\nconsole.log(`Semantic Divergence: ${delta}`);',
+        executableScript: 'ctx.log("Sample script");\nreturn { ok: true };',
         expectedOutputs: { verifiedInvariantsCount: 3, stateMutations: { phaseBoundary: 'PASSED' } },
         criticalGuardRequirements: ['Order 0 Epistemic Subjugation', 'Pre-Compression Signature Binding']
       },
       guardReport: {
         guardShellTimestamp: Date.now(),
-        watermarkSignatureStatus: 'VERIFIED',
+        watermarkSignatureStatus: 'MISSING',
         decompressionStatus: true,
         semanticAudit: {
           alignmentScore: 98,
           dataDegradationIndex: 0.02,
           boundaryDecision: 'APPROVED',
-          reasoning: 'Sample verified output demonstrating zero data degradation across the phase boundary.',
+          reasoning: 'SAMPLE DATA for trying the import box. Imported reports are display-only and never mark the boundary as passed.',
           invariantAudit: [
             { name: 'Transcript Grounding', status: 'PASS', evidence: 'Ground truth anchors verified' },
             { name: 'Channel Integrity Lemma', status: 'PASS', evidence: 'H(D(C(Ls))) = H(Ls) authenticated' }
           ]
         },
-        passedPhaseBoundary: true
+        passedPhaseBoundary: false
       }
     };
     handlePastedContentChange(JSON.stringify(sample, null, 2));
@@ -734,6 +757,16 @@ ${activeVideo?.rawTranscript?.trim() || 'No uncompressed transcript loaded for a
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleExportPlaylist}
+              disabled={isExportingPlaylist || !playlist?.videos.length}
+              className="px-3.5 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs font-mono transition-all shadow-md shadow-cyan-500/20 flex items-center gap-1.5 disabled:opacity-50"
+              title="Download one JSON file with every video's compressed transcript and signed logic"
+            >
+              <ListVideo className="w-3.5 h-3.5" />
+              <span>{isExportingPlaylist ? 'Exporting…' : 'Export Playlist JSON'}</span>
+            </button>
+
             <button
               onClick={handleExportPdf}
               disabled={isExportingPdf}
@@ -803,6 +836,57 @@ ${activeVideo?.rawTranscript?.trim() || 'No uncompressed transcript loaded for a
           {/* MODE 1: DOWNLOAD WORKFLOW */}
           {activeMode === 'download' && (
             <div className="space-y-4">
+              {/* Playlist-wide export */}
+              <div className="p-4 rounded-xl bg-slate-950/80 border border-cyan-700/60 space-y-3 font-mono text-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <span className="p-2 rounded-lg bg-cyan-950 text-cyan-300 border border-cyan-800/60">
+                      <ListVideo className="w-5 h-5" />
+                    </span>
+                    <div>
+                      <h4 className="font-bold text-slate-100 text-sm">Whole Playlist: Compressed Transcripts + Synthesized Logic</h4>
+                      <p className="text-[11px] text-slate-400 font-sans">
+                        One JSON file covering every video in {playlist ? `"${playlist.title}"` : 'the current playlist'}: signed manifest, DEFLATE-compressed
+                        transcript, and the exact logic signed with it, plus the signer's public key so it can be verified offline. Videos
+                        not yet signed are included and marked <code>not_signed</code>.
+                      </p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] px-2.5 py-1 rounded bg-cyan-950 text-cyan-300 font-bold border border-cyan-800/60 shrink-0 hidden sm:inline">
+                    .JSON
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-[10px] pt-1 border-t border-slate-800/80 text-slate-400">
+                  <div>
+                    <span className="text-slate-500 block">Videos:</span>
+                    <strong className="text-slate-200">{playlistStats.total}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Signed with logic:</span>
+                    <strong className={playlistStats.signed === playlistStats.total && playlistStats.total > 0 ? 'text-emerald-400' : 'text-amber-300'}>
+                      {playlistStats.signed} / {playlistStats.total}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Compressed:</span>
+                    <strong className="text-slate-200">{playlistStats.compressed} / {playlistStats.total}</strong>
+                  </div>
+                </div>
+                <button
+                  onClick={handleExportPlaylist}
+                  disabled={isExportingPlaylist || !playlistStats.total}
+                  className="w-full py-2.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>{isExportingPlaylist ? 'Building playlist export…' : `Download Playlist JSON (${playlistStats.total} videos)`}</span>
+                </button>
+                {playlistStats.total > 0 && playlistStats.signed < playlistStats.total && (
+                  <p className="text-[10px] text-slate-500 font-sans">
+                    To include a video's logic, select it, run the RCL cycle, then sign it on the Watermark &amp; Bind tab.
+                  </p>
+                )}
+              </div>
+
               {/* Featured Card: Formatted PDF Document Export */}
               <div className="p-4 rounded-xl bg-gradient-to-br from-slate-950 via-red-950/20 to-slate-950 border border-red-700/60 hover:border-red-500 transition-all space-y-3 font-mono text-xs shadow-lg shadow-red-950/20">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -832,7 +916,7 @@ ${activeVideo?.rawTranscript?.trim() || 'No uncompressed transcript loaded for a
                   <div>
                     <span className="text-slate-500 block">Watermark Seal:</span>
                     <strong className="text-cyan-300 truncate block">
-                      {activeVideo?.watermark?.watermarkId || 'HMAC-SHA256 Bounded'}
+                      {dossier.watermarkId}
                     </strong>
                   </div>
                   <div>
@@ -850,7 +934,7 @@ ${activeVideo?.rawTranscript?.trim() || 'No uncompressed transcript loaded for a
                   <div>
                     <span className="text-slate-500 block">Boundary Status:</span>
                     <strong className="text-emerald-400">
-                      {guardReport?.semanticAudit.boundaryDecision || 'APPROVED'} (Score: {guardReport?.semanticAudit.alignmentScore ?? 98}%)
+                      {dossier.verdict} (model score: {dossier.modelScore})
                     </strong>
                   </div>
                 </div>
@@ -972,7 +1056,7 @@ ${activeVideo?.rawTranscript?.trim() || 'No uncompressed transcript loaded for a
                   <div>
                     <h4 className="font-bold text-slate-200 text-sm">TRII Proof Certificate</h4>
                     <p className="text-[11px] text-slate-400 mt-1 font-sans">
-                      Verifiable audit certificate containing pre-compression HMAC digests and Lyapunov stability evidence.
+                      Guard results with the signed transcript/logic hashes. Not self-authenticating: re-run the guard to verify.
                     </p>
                   </div>
                   <button
@@ -1170,7 +1254,7 @@ ${activeVideo?.rawTranscript?.trim() || 'No uncompressed transcript loaded for a
         <div className="px-6 py-3.5 border-t border-slate-800 bg-slate-950/60 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
           <div className="flex items-center gap-2 text-slate-400">
             <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-            <span>AetherShell Canonical Export Pipeline • SHA-256 HMAC Sealed</span>
+            <span>AetherShell export • signatures verifiable via /api/crypto/public-key</span>
           </div>
 
           <div className="flex items-center gap-2">

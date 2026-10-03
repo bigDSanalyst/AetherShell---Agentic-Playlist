@@ -20,7 +20,6 @@ import {
   Award,
   Copy,
   Download,
-  Check,
 } from 'lucide-react';
 import {
   InnershellLogic,
@@ -31,6 +30,7 @@ import {
   SotaReflexiveInvariant,
 } from '../types';
 import { executeInnershellScript } from '../utils/crypto';
+import { copyText } from '../utils/clipboard';
 
 interface InnerShellBodyProps {
   innershellLogic: InnershellLogic | null;
@@ -61,29 +61,38 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
   const [userDirectives, setUserDirectives] = useState('');
   const [isExecutingScript, setIsExecutingScript] = useState(false);
   const [customScriptCode, setCustomScriptCode] = useState<string>('');
-  const [testedInvariants, setTestedInvariants] = useState<Record<string, boolean>>({});
-
-  const [copiedScript, setCopiedScript] = useState(false);
+  const [testedInvariants, setTestedInvariants] = useState<Record<string, 'PASS' | 'FAIL' | 'N/A'>>({});
 
   // Sync rclIterations if optimal count applied from AetherTwin
   React.useEffect(() => {
-    if (sessionMemory?.memoryLattice?.optimalRclIterations) {
+    if (sessionMemory.memoryLattice?.optimalRclIterations) {
       setRclIterations(sessionMemory.memoryLattice.optimalRclIterations);
     }
-  }, [sessionMemory?.memoryLattice?.optimalRclIterations]);
+  }, [sessionMemory.memoryLattice?.optimalRclIterations]);
 
+  // Invariants map to built-in deterministic checks; model-written code is never run here.
   const handleTestInvariant = (inv: SotaReflexiveInvariant) => {
-    try {
-      const runner = new Function('ctx', inv.runtimeAssertionCode || 'return true;');
-      const passed = runner({
-        memory: sessionMemory?.memoryLattice || {},
-        ssiState: rclAnalysis?.ssiInjectedState || {},
-        transcriptHash: activeVideo?.watermark?.transcriptHash || 'HASH_OK',
-      });
-      setTestedInvariants((prev) => ({ ...prev, [inv.id]: Boolean(passed) }));
-    } catch {
-      setTestedInvariants((prev) => ({ ...prev, [inv.id]: true }));
+    let outcome: 'PASS' | 'FAIL' | 'N/A';
+    switch (inv.checkId) {
+      case 'transcript-present':
+        outcome = activeVideo?.rawTranscript?.trim() ? 'PASS' : 'FAIL';
+        break;
+      case 'memory-is-object':
+        outcome = sessionMemory.memoryLattice && typeof sessionMemory.memoryLattice === 'object' ? 'PASS' : 'FAIL';
+        break;
+      case 'logic-signed':
+        // Presence only; the Guard Shell verifies the signature and hashes.
+        outcome = activeVideo?.watermark?.manifest?.logicSha256 && activeVideo?.watermark?.signature ? 'PASS' : 'FAIL';
+        break;
+      case 'grounding-threshold': {
+        const limit = 1 - (rclAnalysis?.ssiInjectedState?.invariantTolerances?.driftThreshold ?? 0.5);
+        outcome = typeof rclAnalysis?.groundingScore === 'number' && rclAnalysis.groundingScore >= limit ? 'PASS' : 'FAIL';
+        break;
+      }
+      default:
+        outcome = 'N/A';
     }
+    setTestedInvariants((prev) => ({ ...prev, [inv.id]: outcome }));
   };
 
   // Sync script when new logic is synthesized
@@ -98,8 +107,8 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
     if (!codeToRun) return;
 
     setIsExecutingScript(true);
-    setTimeout(() => {
-      const res = executeInnershellScript(codeToRun, {
+    void (async () => {
+      const res = await executeInnershellScript(codeToRun, {
         memory: sessionMemory.memoryLattice,
         ssiState: rclAnalysis?.ssiInjectedState || {},
         transcriptHash: activeVideo?.watermark?.transcriptHash || 'PENDING_WATERMARK',
@@ -119,7 +128,7 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
         onUpdateSessionMemory(res.mutatedMemory);
       }
       setIsExecutingScript(false);
-    }, 150);
+    })();
   };
 
   return (
@@ -230,7 +239,7 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
                 <div className="flex items-center gap-1.5 font-mono text-[10px]">
                   <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/60 flex items-center gap-1">
                     <Activity className="w-3 h-3 text-emerald-400" />
-                    Lyapunov: {((rclAnalysis.lyapunovConvergenceScore || 0.988) * 100).toFixed(1)}%
+                    Grounded: {typeof rclAnalysis.groundingScore === 'number' ? `${(rclAnalysis.groundingScore * 100).toFixed(0)}%` : 'n/a'}
                   </span>
                   <span className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/60">
                     {rclAnalysis.iterationCount}x Cycles
@@ -245,17 +254,22 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
                 {rclAnalysis.convergenceRounds && rclAnalysis.convergenceRounds.length > 0 && (
                   <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800/80 space-y-1.5 font-mono text-[11px]">
                     <div className="flex justify-between text-slate-400 text-[10px]">
-                      <span>Reflexive Loop Convergence:</span>
-                      <span className="text-emerald-400 font-bold">Fixed-Point Equilibrium Reached</span>
+                      <span>Measured per pass (content-word overlap):</span>
+                      <span className={rclAnalysis.reflexiveFixedPointReached ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>
+                        {rclAnalysis.reflexiveFixedPointReached ? 'Stable (≤10% change)' : rclAnalysis.iterationCount > 1 ? 'Still changing' : 'Single pass'}
+                      </span>
                     </div>
                     <div className="grid grid-cols-3 gap-2 text-center text-[10px]">
                       {rclAnalysis.convergenceRounds.map((rnd) => (
                         <div key={rnd.cycle} className="p-1.5 rounded bg-slate-900 border border-slate-800">
                           <span className="text-cyan-400 font-semibold block">Pass {rnd.cycle}</span>
                           <span className="text-slate-400 text-[9px] block truncate">{rnd.focus}</span>
-                          <span className="text-emerald-400 font-bold text-[10px]">
-                            -{(rnd.deltaReduction * 100).toFixed(0)}% Error
+                          <span className="text-emerald-400 font-bold text-[10px] block">
+                            {(rnd.groundingRatio * 100).toFixed(0)}% grounded
                           </span>
+                          {rnd.cycle > 1 && (
+                            <span className="text-slate-400 text-[9px] block">{(rnd.changeFromPrevious * 100).toFixed(0)}% changed</span>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -280,21 +294,28 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
                           </div>
                           <button
                             onClick={() => handleTestInvariant(inv)}
+                            title={inv.checkId === 'none' ? 'No built-in check maps to this invariant' : `Built-in check: ${inv.checkId}`}
                             className={`px-2 py-0.5 rounded text-[10px] flex items-center gap-1 transition-all ${
-                              isTested
+                              isTested === 'PASS'
                                 ? 'bg-emerald-950 text-emerald-300 border border-emerald-700/60'
+                                : isTested === 'FAIL'
+                                ? 'bg-rose-950 text-rose-300 border border-rose-700/60'
                                 : 'bg-slate-900 hover:bg-cyan-950 text-slate-400 hover:text-cyan-300 border border-slate-800'
                             }`}
                           >
-                            {isTested ? (
+                            {isTested === 'PASS' ? (
                               <>
                                 <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                                <span>PROVEN_TRUE</span>
+                                <span>CHECK PASSED</span>
                               </>
+                            ) : isTested === 'FAIL' ? (
+                              <span>CHECK FAILED</span>
+                            ) : isTested === 'N/A' ? (
+                              <span>NOT CHECKABLE</span>
                             ) : (
                               <>
                                 <Zap className="w-3 h-3 text-cyan-400" />
-                                <span>Verify Proof</span>
+                                <span>Run Check</span>
                               </>
                             )}
                           </button>
@@ -316,8 +337,8 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
                           <span>
                             Hoare: <code className="text-slate-400">{`{${inv.hoareTriple.preCondition}} → {${inv.hoareTriple.postCondition}}`}</code>
                           </span>
-                          <span className="text-emerald-400">
-                            Lyapunov: {inv.lyapunovStability.energyMetric}
+                          <span className={inv.evidenceFoundInTranscript ? 'text-emerald-400' : 'text-amber-400'}>
+                            {inv.evidenceFoundInTranscript ? 'Quote found in transcript' : 'Quote not found in transcript'}
                           </span>
                         </div>
                       </div>
@@ -343,7 +364,7 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
                 {/* Reflexive Feedback Notes */}
                 <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800/80 space-y-1">
                   <span className="text-[11px] font-mono text-cyan-400">
-                    Reflexive Fixed-Point Harmonization:
+                    Pass notes (model) and measurements:
                   </span>
                   <p className="text-xs text-slate-300 leading-relaxed font-sans">
                     {rclAnalysis.reflexiveFeedbackNotes}
@@ -417,31 +438,14 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
                 {customScriptCode && (
                   <>
                     <button
-                      onClick={async () => {
-                        try {
-                          if (navigator?.clipboard?.writeText) {
-                            await navigator.clipboard.writeText(customScriptCode);
-                          } else {
-                            const ta = document.createElement('textarea');
-                            ta.value = customScriptCode;
-                            ta.style.position = 'fixed';
-                            ta.style.opacity = '0';
-                            document.body.appendChild(ta);
-                            ta.select();
-                            document.execCommand('copy');
-                            document.body.removeChild(ta);
-                          }
-                          setCopiedScript(true);
-                          setTimeout(() => setCopiedScript(false), 2000);
-                        } catch (err) {
-                          console.warn('Script copy prevented:', err);
-                        }
+                      onClick={() => {
+                        void copyText(customScriptCode);
                       }}
                       className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-xs flex items-center gap-1 transition-colors"
                       title="Copy synthesized script to clipboard"
                     >
-                      {copiedScript ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span className="hidden sm:inline">{copiedScript ? 'Copied' : 'Copy'}</span>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Copy</span>
                     </button>
                     <button
                       onClick={() => {

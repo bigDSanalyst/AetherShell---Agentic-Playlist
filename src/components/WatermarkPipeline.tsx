@@ -141,7 +141,7 @@ export const WatermarkPipeline: React.FC<WatermarkPipelineProps> = ({
               </span>
               <p className="font-semibold text-slate-300">Transcript Watermark</p>
               <span className="text-[10px] text-slate-400">
-                {watermark ? 'HMAC + Stego Injected' : 'Pending Watermarking'}
+                {watermark ? 'SHA-256 + Stego Marker' : 'Pending Watermarking'}
               </span>
             </div>
 
@@ -158,7 +158,7 @@ export const WatermarkPipeline: React.FC<WatermarkPipelineProps> = ({
               </span>
               <p className="font-semibold text-emerald-300">Logic Signature Binding</p>
               <span className="text-[10px] text-emerald-400">
-                {watermark?.signedLogicHash ? 'Pre-Compression Signed' : 'Pending Logic Hash'}
+                {watermark?.signedLogicHash ? 'Ed25519-Signed Before Compression' : 'Pending Logic Hash'}
               </span>
             </div>
 
@@ -215,7 +215,7 @@ export const WatermarkPipeline: React.FC<WatermarkPipelineProps> = ({
 
                 {/* Direct Transcript Canonical Hash */}
                 <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
-                  <span className="text-[11px] text-slate-500 block">Direct Transcript HMAC-SHA256:</span>
+                  <span className="text-[11px] text-slate-500 block">Transcript SHA-256:</span>
                   <span className="text-slate-300 text-[11px] break-all block">
                     {watermark.transcriptHash}
                   </span>
@@ -225,13 +225,18 @@ export const WatermarkPipeline: React.FC<WatermarkPipelineProps> = ({
                 <div className="p-3 rounded-xl bg-slate-950 border border-emerald-900/40 space-y-1">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] text-emerald-400 block">
-                      Signed Logic Hash (Bound to Transcript Watermark):
+                      Ed25519 signature over manifest (transcript + logic SHA-256):
                     </span>
                     <Lock className="w-3 h-3 text-emerald-400" />
                   </div>
                   <span className="text-emerald-300 text-[11px] break-all block font-bold">
-                    {watermark.signedLogicHash || 'NO_LOGIC_ATTACHED'}
+                    {watermark.signature || watermark.signedLogicHash || 'NO_LOGIC_ATTACHED'}
                   </span>
+                  {watermark.manifest?.logicSha256 && (
+                    <span className="text-slate-400 text-[10px] break-all block">
+                      Logic SHA-256: {watermark.manifest.logicSha256} · signer key {watermark.publicKeyFingerprint}
+                    </span>
+                  )}
                 </div>
 
                 {/* Steganographic Zero-Width Data */}

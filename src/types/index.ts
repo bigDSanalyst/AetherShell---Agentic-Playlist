@@ -14,6 +14,20 @@ export interface WatermarkData {
   signedLogicHash: string | null;
   watermarkedAt: number;
   watermarkedText: string;
+  // Signed provenance manifest (Ed25519). The signature covers the transcript
+  // and logic SHA-256 hashes and is created before compression.
+  manifest?: {
+    v: 1;
+    watermarkId: string;
+    transcriptSha256: string;
+    logicSha256: string | null;
+    videoId: string | null;
+    playlistId: string | null;
+    createdAt: number;
+  };
+  signature?: string;
+  logicHash?: string | null;
+  publicKeyFingerprint?: string;
 }
 
 export interface CompressedTranscriptData {
@@ -38,6 +52,12 @@ export interface VideoNode {
   segments?: TranscriptSegment[];
   watermark?: WatermarkData;
   compressedTranscript?: CompressedTranscriptData;
+  transcriptSource?: 'youtube-captions' | 'unavailable';
+  transcriptLanguage?: string;
+  transcriptError?: string;
+  uploadDate?: string; // ISO 8601 from the YouTube Data API; absent when unknown
+  // The exact logic object that was signed together with this transcript.
+  boundLogic?: InnershellLogic;
 }
 
 export interface PlaylistData {
@@ -46,6 +66,7 @@ export interface PlaylistData {
   description: string;
   url: string;
   videos: VideoNode[];
+  isDemo?: boolean;
 }
 
 export interface CuratedPlaylistSummary {
@@ -54,6 +75,7 @@ export interface CuratedPlaylistSummary {
   description: string;
   videoCount: number;
   url: string;
+  isDemo?: boolean;
 }
 
 export interface SotaReflexiveInvariant {
@@ -67,24 +89,21 @@ export interface SotaReflexiveInvariant {
     postCondition: string;
   };
   description: string;
-  convergenceGradient: {
-    loopIndex: number;
-    errorDelta: number;
-    status: 'CONVERGED' | 'STABILIZING';
-  }[];
-  runtimeAssertionCode: string;
-  lyapunovStability: {
-    stable: boolean;
-    energyMetric: number;
-    description: string;
-  };
+  // Which built-in deterministic check (if any) this invariant maps to.
+  checkId: InvariantCheckId;
+  transcriptEvidence: string;
+  evidenceFoundInTranscript: boolean;
 }
 
+export type InvariantCheckId = 'transcript-present' | 'memory-is-object' | 'logic-signed' | 'grounding-threshold' | 'none';
+
+// Measured per RCL pass by the server.
 export interface RclConvergenceRound {
   cycle: number;
   focus: string;
-  deltaReduction: number;
-  lyapunovResidual: number;
+  changeFromPrevious: number; // 1 - Jaccard similarity of content words vs the previous pass
+  groundingRatio: number; // share of the pass's content words that appear in the transcript
+  modelUsed: string;
 }
 
 export interface RclAnalysis {
@@ -93,7 +112,7 @@ export interface RclAnalysis {
   sotaReflexiveInvariants?: SotaReflexiveInvariant[];
   convergenceRounds?: RclConvergenceRound[];
   reflexiveFixedPointReached?: boolean;
-  lyapunovConvergenceScore?: number;
+  groundingScore?: number;
   reflexiveFeedbackNotes: string;
   ssiInjectedState: {
     activeContextWindow: number;
@@ -150,7 +169,16 @@ export interface GuardAuditReport {
     signedLogicHashProvided: string | null;
     computedLogicSig: string;
     signedBeforeCompression: boolean;
+    signatureValid?: boolean;
+    transcriptHashMatch?: boolean;
+    logicHashMatch?: boolean;
+    expectedLogicHash?: string | null;
+    computedLogicHash?: string;
+    signerKeyFingerprint?: string;
   };
+  provenanceFailures?: string[];
+  llmAvailable?: boolean;
+  evaluatorId?: string;
   semanticAudit: {
     alignmentScore: number;
     dataDegradationIndex: number;
@@ -159,6 +187,7 @@ export interface GuardAuditReport {
     invariantAudit: InvariantAuditItem[];
     feedbackLoopRequired: boolean;
     correctiveRclGuidance: string;
+    unsupportedClaims?: string[];
   };
   passedPhaseBoundary: boolean;
   // Multi-Guard Shell Defense Array Telemetry
@@ -248,6 +277,7 @@ export interface CounterfactualExperiment {
   status: 'COMPLETED' | 'SIMULATING';
   ranAt: number;
   verdict: 'SUPERIOR' | 'INFERIOR' | 'EQUIVALENT';
+  note?: string;
 }
 
 export interface TwinLogicStateRecord {
@@ -348,6 +378,7 @@ export interface GroundingCitation {
   timestamp: string;
   verbatimQuote: string;
   synthesizedInsight: string;
+  quoteVerified?: boolean;
 }
 
 export interface SynthesizedKnowledge {
@@ -399,6 +430,8 @@ export interface GitHubGuardAuditResult {
   guardId: string;
   guardName: string;
   executedAt: number;
+  evaluationMethod?: 'llm-review' | 'sandbox';
+  sandboxResult?: { ok: boolean; passed: boolean; score: number; violations: string[]; error?: string };
 }
 
 
