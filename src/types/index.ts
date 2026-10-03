@@ -106,8 +106,20 @@ export interface RclConvergenceRound {
   modelUsed: string;
 }
 
+// How AetherTwin's learning shaped one synthesis (server/learning.ts).
+export interface SynthesisLearning {
+  playlistKey: string;
+  passes: number;
+  chosenBy: 'learned' | 'owner';
+  why: string;
+  lessonsUsed: { id: string; failedChecks: string[] }[];
+  exampleUsed: string | null;
+  ledgerSeq: number;
+}
+
 export interface RclAnalysis {
   iterationCount: number;
+  learning?: SynthesisLearning;
   extractedInvariants: string[];
   sotaReflexiveInvariants?: SotaReflexiveInvariant[];
   convergenceRounds?: RclConvergenceRound[];
@@ -352,6 +364,8 @@ export interface ParallelShadowState {
   appliedToPrimaryCount: number;
   // From the server's run ledger (anytime-valid e-process over guard failures).
   ledgerSize?: number;
+  // GET /api/learning shape; see server/learning.ts.
+  learning?: any;
   drift?: {
     n: number;
     failures: number;

@@ -11,10 +11,12 @@ import { diagnose, renderFindings } from '../server/doctor';
 import { envFloat } from '../server/http';
 import { loadCharterState, type LedgerCharterRecord } from '../server/charter';
 import { concerns } from '../server/exchange';
+import { LearningStore } from '../server/learning';
 
 dotenv.config({ quiet: true } as any);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ledgerPath = process.env.AETHERSHELL_LEDGER_PATH ?? path.join(root, 'data', 'ledger.jsonl');
+const learningPath = process.env.AETHERSHELL_LEARNING_PATH ?? path.join(root, 'data', 'learning.jsonl');
 const keys = loadSigningKeys();
 const ledger = new RunLedger(keys, ledgerPath || null);
 const v = ledger.verify();
@@ -35,6 +37,10 @@ const result = diagnose({
   exchange: (() => {
     const cs = concerns(ledger.all() as any);
     return { awaitingOwner: cs.filter((c) => c.status === 'awaiting-owner').length, awaitingSystem: cs.filter((c) => c.status === 'awaiting-system').length };
+  })(),
+  learning: (() => {
+    const store = new LearningStore(learningPath || null);
+    return { path: store.filePath, ...store.report(ledger.all() as any) };
   })(),
 });
 console.log(process.argv.includes('--json') ? JSON.stringify(result, null, 2) : renderFindings(result));

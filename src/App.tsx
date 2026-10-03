@@ -251,7 +251,7 @@ export default function App() {
   };
 
   // Handler: Run RCL and SSI synthesis in Innershell Body
-  const handleRunRclSsi = async (iterations: number, directives: string) => {
+  const handleRunRclSsi = async (iterations: number | 'auto', directives: string) => {
     if (!activeVideo?.rawTranscript) {
       showToast('Please select a video with transcript dialogue first', 'error');
       return;
@@ -267,7 +267,7 @@ export default function App() {
         userDirectives: directives,
       });
 
-      setRclAnalysis(res.rclResult);
+      setRclAnalysis({ ...res.rclResult, learning: res.learning });
       setInnershellLogic(res.innershellLogic);
 
       // Update memory lattice with newly induced state
@@ -284,7 +284,10 @@ export default function App() {
         memoryLattice: updatedLattice,
       }));
 
-      showToast(`RCL/SSI cycle complete (${iterations} iterations). Logic ready for binding.`, 'success');
+      showToast(
+        `RCL/SSI cycle complete (${res.learning.passes} pass(es)${res.learning.chosenBy === 'learned' ? ', chosen by AetherTwin' : ''}). Logic ready for binding.`,
+        'success'
+      );
     } catch (err: any) {
       showToast(err.message || 'RCL/SSI cycle failed', 'error');
     } finally {

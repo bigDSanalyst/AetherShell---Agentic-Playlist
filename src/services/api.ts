@@ -5,6 +5,7 @@ import {
   CompressedTranscriptData,
   InnershellLogic,
   RclAnalysis,
+  SynthesisLearning,
   GuardAuditReport,
   DualGuardComparisonReport,
 } from '../types';
@@ -112,11 +113,12 @@ export async function runRclSsiCycle(params: {
   playlist?: PlaylistData;
   activeVideo?: any;
   sessionMemory?: any;
-  rclIterations?: number;
+  rclIterations?: number | 'auto';
   userDirectives?: string;
 }): Promise<{
   rclResult: RclAnalysis;
   innershellLogic: InnershellLogic;
+  learning: SynthesisLearning;
   cycleTimestamp: number;
 }> {
   const res = await apiFetch('/api/engine/rcl-ssi-cycle', {
@@ -389,6 +391,13 @@ export async function syncTwinToPrimary(): Promise<{ success: boolean; message: 
 }
 
 
+
+export async function fetchLearning(playlistKey?: string): Promise<any> {
+  const q = playlistKey ? `?playlistKey=${encodeURIComponent(playlistKey)}` : '';
+  const res = await apiFetch(`/api/learning${q}`);
+  if (!res.ok) throw new Error('Could not load what AetherTwin has learned');
+  return (await res.json()).learning;
+}
 
 export async function fetchSignerPublicKey(): Promise<{ algorithm: string; publicKeyPem: string; fingerprint: string; ephemeral: boolean }> {
   const res = await apiFetch('/api/crypto/public-key');

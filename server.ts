@@ -44,6 +44,7 @@ import {
   type SignedOwnerStatement,
 } from './server/exchange';
 import { RunLedger, type LedgerEntry } from './server/runLedger';
+import { LearningStore, chooseArm, learningPromptBlock, lessonEffect, playlistKeyOf, synthesisOutcomes, armStats } from './server/learning';
 import { ledgerDrift } from './server/eprocess';
 import { diagnose } from './server/doctor';
 import { envFloat, envInt, rateLimit, requireAccessToken } from './server/http';
@@ -198,6 +199,35 @@ Return JSON: { "decision": "accepted" | "declined" | "noted", "reason": "string,
   });
 }
 const DRIFT_ALPHA = envFloat('DRIFT_ALPHA', 0.01);
+
+// AetherTwin's learning (server/learning.ts): lessons from rejected syntheses,
+// examples from passed ones, and a per-playlist choice of RCL pass count. The
+// store holds text; the ledger decides what of it counts. It never touches the
+// charter. AETHERSHELL_LEARNING_PATH="" keeps it in memory only.
+const LEARNING_PATH = process.env.AETHERSHELL_LEARNING_PATH ?? path.resolve(__dirname, 'data', 'learning.jsonl');
+const learningStore = new LearningStore(LEARNING_PATH || null);
+
+function learningReport(playlistKey?: string) {
+  const entries = runLedger.all();
+  const outcomes = synthesisOutcomes(entries);
+  const keys = [...new Set(outcomes.map((o) => o.playlistKey))];
+  return {
+    storePath: learningStore.filePath,
+    syntheses: outcomes.length,
+    judged: outcomes.filter((o) => o.reward !== null).length,
+    passed: outcomes.filter((o) => o.reward === 1).length,
+    ...learningStore.report(entries),
+    lessonEffect: lessonEffect(outcomes),
+    playlists: keys.map((k) => ({
+      playlistKey: k,
+      syntheses: outcomes.filter((o) => o.playlistKey === k).length,
+      arms: armStats(outcomes, k).filter((a) => a.n > 0),
+      next: chooseArm(outcomes, k),
+    })),
+    forPlaylist: playlistKey ? { playlistKey, next: chooseArm(outcomes, playlistKey) } : null,
+    recent: outcomes.slice(-10).reverse(),
+  };
+}
 
 // Guard runs as the ledger recorded them.
 function guardEntries(): LedgerEntry[] {
@@ -585,6 +615,7 @@ function refreshTwinStats() {
   shadowState.channelDriftDetectionRate = n ? round4(runs.filter((e) => mode(e) === 'CHANNEL_DRIFT').length / n) : 0;
   shadowState.lastObservedRunId = runs.at(-1)?.data.runId ?? null;
   shadowState.drift = driftReport();
+  shadowState.learning = learningReport();
   shadowState.ledgerSize = runLedger.size;
   shadowState.accumulatedTheoremsCount = shadowState.discoveredTheorems.length;
   shadowState.lastSyncTimestamp = Date.now();
@@ -809,13 +840,21 @@ async function startServer() {
   // against the transcript. Every number reported is measured, not generated.
   app.post('/api/engine/rcl-ssi-cycle', async (req: Request, res: Response) => {
     try {
-      const { activeVideo, sessionMemory, rclIterations = 3, userDirectives = '' } = req.body || {};
+      const { playlist, activeVideo, sessionMemory, rclIterations = 3, userDirectives = '' } = req.body || {};
       const transcript: string = activeVideo?.rawTranscript || '';
       if (!transcript.trim()) {
         return res.status(400).json({ error: 'activeVideo.rawTranscript is required' });
       }
-      const iterations = Math.max(1, Math.min(5, Math.round(Number(rclIterations) || 1)));
       const transcriptForModel = transcript.slice(0, 15000);
+
+      // Learning: what the guards said about earlier syntheses of this material.
+      const playlistKey = playlistKeyOf(playlist, activeVideo);
+      const transcriptSha256 = hashTranscript(transcript);
+      const outcomesSoFar = synthesisOutcomes(runLedger.all());
+      const learned = rclIterations === 'auto' ? chooseArm(outcomesSoFar, playlistKey) : null;
+      const iterations = learned ? learned.passes : Math.max(1, Math.min(5, Math.round(Number(rclIterations) || 1)));
+      const { lessons, example } = learningStore.select(runLedger.all(), playlistKey, transcriptSha256);
+      const learnedBlock = learningPromptBlock(lessons, example);
 
       const rounds: { cycle: number; focus: string; changeFromPrevious: number; groundingRatio: number; modelUsed: string }[] = [];
       let current: any = null;
@@ -832,7 +871,7 @@ ${transcriptForModel}
 
 SESSION MEMORY KEYS: ${Object.keys(sessionMemory || {}).slice(0, 30).join(', ') || '(none)'}
 USER DIRECTIVES: ${String(userDirectives).slice(0, 1000) || '(none)'}
-`;
+${learnedBlock ? `\n${learnedBlock}\n` : ''}`;
         const prompt =
           pass === 1
             ? `${header}
@@ -872,6 +911,19 @@ ${RCL_SCHEMA}`;
       const last = rounds[rounds.length - 1];
       const stabilized = iterations > 1 && last.changeFromPrevious <= 0.1;
 
+      // Record the synthesis so guard verdicts on it can be attributed to how it was made.
+      const synthEntry = runLedger.append('synthesis', {
+        playlistKey,
+        transcriptSha256,
+        logicSha256: hashLogic(innershellLogic),
+        passes: iterations,
+        chosenBy: learned ? 'learned' : 'owner',
+        lessonsUsed: lessons.map((l) => l.id),
+        examplesUsed: example ? [example.id] : [],
+        groundingRatio: last.groundingRatio,
+        modelsUsed: [...new Set(rounds.map((r) => r.modelUsed))],
+      });
+
       res.json({
         success: true,
         rclResult: {
@@ -898,6 +950,15 @@ ${RCL_SCHEMA}`;
           },
         },
         innershellLogic,
+        learning: {
+          playlistKey,
+          passes: iterations,
+          chosenBy: learned ? 'learned' : 'owner',
+          why: learned ? learned.why : `You chose ${iterations} pass(es).`,
+          lessonsUsed: lessons.map((l) => ({ id: l.id, failedChecks: l.failedChecks })),
+          exampleUsed: example ? example.id : null,
+          ledgerSeq: synthEntry.seq,
+        },
         cycleTimestamp: Date.now(),
       });
     } catch (err: any) {
@@ -932,8 +993,15 @@ ${RCL_SCHEMA}`;
         charterSha256: charterState.sha256,
       });
       raiseSystemConcerns();
+      let learnedItem: string | null = null;
+      try {
+        learnedItem = learningStore.observe(entry, runLedger.all(), innershellLogic, report.semanticAudit)?.id ?? null;
+      } catch (e: any) {
+        console.warn(`[learning] could not store what this verdict taught: ${e.message}`);
+      }
       res.json({
         success: true,
+        learnedItem,
         guardReport: { ...report, ledgerSeq: entry.seq, ledgerHash: entry.hash, charterVersion: charter.version, charterSha256: charterState.sha256 },
         evaluator,
       });
@@ -1259,6 +1327,12 @@ Return JSON: { "passed": boolean, "score": 0-100, "decision": "APPROVED" | "QUAR
     res.json({ success: true, experiment: exp, shadowState });
   });
 
+  // What AetherTwin has learned, and the pass count it would choose next.
+  app.get('/api/learning', (req: Request, res: Response) => {
+    const key = typeof req.query.playlistKey === 'string' ? req.query.playlistKey.slice(0, 200) : undefined;
+    res.json({ success: true, learning: learningReport(key) });
+  });
+
   app.post('/api/twin/sync-to-primary', (_req: Request, res: Response) => {
     res.json({
       success: true,
@@ -1413,6 +1487,7 @@ Return JSON: { "passed": boolean, "score": 0-100, "decision": "APPROVED" | "QUAR
         drift: driftReport(),
         charter: { ok: charterState.ok, problems: charterState.problems, version: charterState.signed?.charter.version ?? null },
         exchange: exchangeCounts(),
+        learning: { path: learningStore.filePath, ...learningStore.report(runLedger.all()) },
       })
     );
   });

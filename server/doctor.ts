@@ -26,6 +26,13 @@ export interface DoctorInput {
   drift: { n: number; drifted: boolean; failureRate: number; p0: number; logE: number; threshold: number };
   charter: { ok: boolean; problems: string[]; version: number | null };
   exchange?: { awaitingOwner: number; awaitingSystem: number };
+  learning?: {
+    path: string | null;
+    lessons: { valid: number; notAdmitted: number };
+    examples: { valid: number; notAdmitted: number };
+    tampered: { id: string; why: string }[];
+    loadProblems: string[];
+  };
 }
 
 export function diagnose(i: DoctorInput): { status: Severity; findings: Finding[] } {
@@ -81,7 +88,30 @@ export function diagnose(i: DoctorInput): { status: Severity; findings: Finding[
     );
   }
 
-    const publicHost = i.host !== '127.0.0.1' && i.host !== 'localhost' && i.host !== '::1';
+  if (i.learning) {
+    const l = i.learning;
+    const bad = [...l.loadProblems, ...l.tampered.map((t) => `${t.id}: ${t.why}`)];
+    const counts = `${l.lessons.valid} lesson(s), ${l.examples.valid} example(s) verified against the ledger`;
+    f.push(
+      bad.length
+        ? {
+            check: 'learning',
+            severity: 'DEGRADED',
+            detail: `${counts}; ${bad.length} item(s) do not match the ledger and are ignored: ${bad.slice(0, 3).join('; ')}`,
+            next: `inspect ${l.path ?? 'the learning store'}; it is a cache, so moving it aside loses lessons and examples, not evidence`,
+          }
+        : !l.path
+        ? {
+            check: 'learning',
+            severity: 'DEGRADED',
+            detail: `${counts}; kept in memory only, lost on restart`,
+            next: 'set AETHERSHELL_LEARNING_PATH to a writable file',
+          }
+        : { check: 'learning', severity: 'ok', detail: `${counts} (${l.path})` }
+    );
+  }
+
+  const publicHost = i.host !== '127.0.0.1' && i.host !== 'localhost' && i.host !== '::1';
   if (publicHost && !env.AETHERSHELL_ACCESS_TOKEN) {
     f.push({
       check: 'access',
