@@ -62,3 +62,5 @@ Run lint and tests before every commit.
 | GitHub guard URL validation | `server/github.ts` |
 | Browser sandbox for untrusted code | `src/utils/sandbox.ts` |
 | Playlist JSON export | `src/utils/playlistExport.ts` |
+| Gemini usage / quota tracking | `server/geminiUsage.ts`, `src/components/DashboardWidget.tsx` |
+| Work snapshots (download / restore) | `src/utils/snapshot.ts`, `src/components/SessionMemoryModal.tsx` |

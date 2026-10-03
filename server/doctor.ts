@@ -33,6 +33,7 @@ export interface DoctorInput {
     tampered: { id: string; why: string }[];
     loadProblems: string[];
   };
+  geminiQuota?: { allModelsExhausted: boolean; secondsUntilReset: number; models: { model: string; dailyQuotaReached: boolean; lastRefusalAt: string | null }[] };
 }
 
 export function diagnose(i: DoctorInput): { status: Severity; findings: Finding[] } {
@@ -49,6 +50,22 @@ export function diagnose(i: DoctorInput): { status: Severity; findings: Finding[
           next: 'set GEMINI_API_KEY in .env',
         }
   );
+
+  if (env.GEMINI_API_KEY && i.geminiQuota) {
+    const q = i.geminiQuota;
+    const out = q.models.filter((m) => m.dailyQuotaReached).map((m) => m.model);
+    const resetIn = `${Math.floor(q.secondsUntilReset / 3600)}h ${Math.floor((q.secondsUntilReset % 3600) / 60)}m`;
+    if (out.length) {
+      f.push({
+        check: 'gemini-quota',
+        severity: q.allModelsExhausted ? 'BLOCK' : 'DEGRADED',
+        detail: q.allModelsExhausted
+          ? `Google refused every model today (daily quota used up); synthesis and guard reviews fail closed until the reset in about ${resetIn}`
+          : `Google reports the daily quota used up for ${out.join(', ')}; the other models are still tried. Reset in about ${resetIn}`,
+        next: 'wait for midnight Pacific, or enable billing on the Gemini project in AI Studio',
+      });
+    }
+  }
 
   f.push(
     i.signingKeyEphemeral

@@ -12,6 +12,7 @@ import { envFloat } from '../server/http';
 import { loadCharterState, type LedgerCharterRecord } from '../server/charter';
 import { concerns } from '../server/exchange';
 import { LearningStore } from '../server/learning';
+import { GeminiUsage } from '../server/geminiUsage';
 
 dotenv.config({ quiet: true } as any);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -37,6 +38,14 @@ const result = diagnose({
   exchange: (() => {
     const cs = concerns(ledger.all() as any);
     return { awaitingOwner: cs.filter((c) => c.status === 'awaiting-owner').length, awaitingSystem: cs.filter((c) => c.status === 'awaiting-system').length };
+  })(),
+  geminiQuota: (() => {
+    const usagePath = process.env.AETHERSHELL_USAGE_PATH ?? (ledgerPath ? path.join(path.dirname(ledgerPath), 'gemini-usage.json') : '');
+    const models = (process.env.GEMINI_MODELS || 'gemini-3.1-flash-lite,gemini-flash-latest,gemini-3.8-flash,gemini-3.1-pro-preview')
+      .split(',')
+      .map((m) => m.trim())
+      .filter(Boolean);
+    return new GeminiUsage(usagePath || null).report([...new Set([...models, ...(charter.signed?.charter.guard.reviewModels ?? [])])], null);
   })(),
   learning: (() => {
     const store = new LearningStore(learningPath || null);

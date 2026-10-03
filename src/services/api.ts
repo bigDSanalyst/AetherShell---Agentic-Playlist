@@ -392,6 +392,35 @@ export async function syncTwinToPrimary(): Promise<{ success: boolean; message: 
 
 
 
+export interface GeminiUsageReport {
+  day: string;
+  timeZone: string;
+  secondsUntilReset: number;
+  dailyLimit: number | null;
+  limitSource: string | null;
+  allModelsExhausted: boolean;
+  persisted: string | null;
+  models: {
+    model: string;
+    answered: number;
+    dailyQuotaRefusals: number;
+    rateLimitRefusals: number;
+    otherFailures: number;
+    skippedAfterDailyQuota: number;
+    lastRefusalAt: string | null;
+    lastRefusal: string | null;
+    dailyQuotaReached: boolean;
+    dailyLimit: number | null;
+    usedFraction: number | null;
+  }[];
+}
+
+export async function fetchGeminiUsage(): Promise<{ keySet: boolean; usage: GeminiUsageReport }> {
+  const res = await apiFetch('/api/gemini/usage');
+  if (!res.ok) throw new Error(`server answered ${res.status}`);
+  return res.json();
+}
+
 export async function fetchLearning(playlistKey?: string): Promise<any> {
   const q = playlistKey ? `?playlistKey=${encodeURIComponent(playlistKey)}` : '';
   const res = await apiFetch(`/api/learning${q}`);
