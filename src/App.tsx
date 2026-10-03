@@ -6,6 +6,8 @@ import { WatermarkPipeline } from './components/WatermarkPipeline';
 import { PhaseBoundary } from './components/PhaseBoundary';
 import { GuardShell } from './components/GuardShell';
 import { SessionMemoryModal } from './components/SessionMemoryModal';
+import { DashboardWidget } from './components/DashboardWidget';
+import { buildSnapshot, type ParsedSnapshot } from './utils/snapshot';
 import { EpistemicKnowledgeEngine } from './components/EpistemicKnowledgeEngine';
 import { AetherTwinParallel } from './components/AetherTwinParallel';
 import { AetherOutputHubModal } from './components/AetherOutputHubModal';
@@ -119,12 +121,15 @@ export default function App() {
     };
   });
 
-  // Sync session memory to localStorage on changes
+  // Sync session memory to localStorage on changes, and record whether it worked.
+  const [lastSaved, setLastSaved] = useState<{ at: number } | { error: string } | null>(null);
   useEffect(() => {
     try {
       localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessionMemory));
-    } catch (err) {
+      setLastSaved({ at: Date.now() });
+    } catch (err: any) {
       console.warn('Failed to save session memory to localStorage:', err);
+      setLastSaved({ error: err?.name === 'QuotaExceededError' ? 'browser storage is full' : 'browser refused to save' });
     }
   }, [sessionMemory]);
 
@@ -505,6 +510,28 @@ export default function App() {
   };
 
   // Reset Session
+  // Restore a downloaded snapshot. Guard results are cleared, never restored:
+  // the server ledger is their record, so the guards must run again.
+  const handleRestoreSnapshot = (parsed: Exclude<ParsedSnapshot, { ok: false }>) => {
+    if (parsed.kind === 'memory-only') {
+      setSessionMemory((prev) => ({ ...prev, lastActive: Date.now(), memoryLattice: parsed.memoryLattice as Record<string, any> }));
+      showToast('Memory keys restored', 'success');
+      return;
+    }
+    const s = parsed.snapshot;
+    setSessionMemory((prev) => ({ ...s.sessionMemory, historyRuns: prev.historyRuns }));
+    setPlaylist(s.playlist);
+    setActiveVideo(parsed.activeVideo);
+    setInnershellLogic(s.innershellLogic);
+    setRclAnalysis(s.rclAnalysis);
+    setLastExecutionResult(null);
+    setGuardReport(null);
+    setGuardReportBeta(null);
+    setDualComparisonReport(null);
+    setBoundaryStatus('LOCKED');
+    showToast(`Restored ${parsed.summary}. Run the guards again to get verdicts.`, 'success');
+  };
+
   const handleResetSession = () => {
     const fresh: PersistentSessionMemory = {
       sessionId: `SESSION-${Date.now().toString(36).toUpperCase()}`,
@@ -571,6 +598,7 @@ export default function App() {
         onOpenMemoryModal={() => setIsMemoryModalOpen(true)}
         onOpenOutputHub={() => setIsOutputHubOpen(true)}
         hasWatermarkAndLogic={hasWatermarkAndLogic}
+        lastSaved={lastSaved}
       />
 
       {/* Main Body */}
@@ -587,6 +615,7 @@ export default function App() {
         />
 
         {/* Tab 1: YouTube Ingestion & Transcripts */}
+        {activeTab === 'pipeline' && <DashboardWidget />}
         {activeTab === 'pipeline' && (
           <PlaylistIngestion
             playlist={playlist}
@@ -718,6 +747,8 @@ export default function App() {
           }))
         }
         onResetSession={handleResetSession}
+        buildSnapshot={() => buildSnapshot({ sessionMemory, playlist, activeVideo, innershellLogic, rclAnalysis })}
+        onRestoreSnapshot={handleRestoreSnapshot}
       />
       </ErrorBoundary>
 

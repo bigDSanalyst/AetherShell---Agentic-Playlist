@@ -23,6 +23,8 @@ interface HeaderProps {
   onOpenMemoryModal: () => void;
   onOpenOutputHub: () => void;
   hasWatermarkAndLogic: boolean;
+  // When session memory was last written to this browser's storage (or why it failed).
+  lastSaved: { at: number } | { error: string } | null;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -34,6 +36,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenMemoryModal,
   onOpenOutputHub,
   hasWatermarkAndLogic,
+  lastSaved,
 }) => {
   const memoryKeyCount = Object.keys(sessionMemory.memoryLattice || {}).length;
 
@@ -60,6 +63,16 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
             <p className="text-xs text-slate-400 font-mono">
               YouTube Playlist Transcripts • Watermark Signature Binding • Dual-Shell Boundary
+            </p>
+            <p
+              className={`text-[10px] font-mono ${lastSaved && 'error' in lastSaved ? 'text-rose-400' : 'text-slate-500'}`}
+              title="Session memory is saved in this browser; download a snapshot from Memory to keep a copy"
+            >
+              {!lastSaved
+                ? 'Not saved yet'
+                : 'error' in lastSaved
+                ? `Not saved: ${lastSaved.error}`
+                : `Last saved ${new Date(lastSaved.at).toLocaleTimeString()} (this browser)`}
             </p>
           </div>
         </div>

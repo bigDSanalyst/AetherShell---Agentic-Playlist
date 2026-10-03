@@ -12,6 +12,7 @@ import {
   Key,
 } from 'lucide-react';
 import { PersistentSessionMemory } from '../types';
+import { MAX_SNAPSHOT_BYTES, parseSnapshot, type ParsedSnapshot, type WorkSnapshot } from '../utils/snapshot';
 
 interface SessionMemoryModalProps {
   isOpen: boolean;
@@ -19,6 +20,8 @@ interface SessionMemoryModalProps {
   sessionMemory: PersistentSessionMemory;
   onUpdateMemory: (newMemory: Record<string, any>) => void;
   onResetSession: () => void;
+  buildSnapshot: () => WorkSnapshot;
+  onRestoreSnapshot: (parsed: Exclude<ParsedSnapshot, { ok: false }>) => void;
 }
 
 export const SessionMemoryModal: React.FC<SessionMemoryModalProps> = ({
@@ -27,14 +30,18 @@ export const SessionMemoryModal: React.FC<SessionMemoryModalProps> = ({
   sessionMemory,
   onUpdateMemory,
   onResetSession,
+  buildSnapshot,
+  onRestoreSnapshot,
 }) => {
-  if (!isOpen) return null;
-
+  // Hooks run on every render, open or closed (an early return before them breaks React).
   const [newKey, setNewKey] = useState('');
   const [newValue, setNewValue] = useState('');
   const [copySuccess, setCopySuccess] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [pendingRestore, setPendingRestore] = useState<Exclude<ParsedSnapshot, { ok: false }> | null>(null);
+
+  if (!isOpen) return null;
 
   const lattice = sessionMemory?.memoryLattice || {};
 
@@ -59,35 +66,37 @@ export const SessionMemoryModal: React.FC<SessionMemoryModalProps> = ({
     onUpdateMemory(updated);
   };
 
+  // Whole working state (memory, playlist, transcripts, signed watermarks, logic).
   const handleExportJson = () => {
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(sessionMemory, null, 2));
+    const blob = new Blob([JSON.stringify(buildSnapshot(), null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
     const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `aethershell-memory-${(sessionMemory?.sessionId || 'session').slice(0, 8)}.json`);
+    downloadAnchor.href = url;
+    downloadAnchor.download = `aethershell-snapshot-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
     setCopySuccess(true);
     setTimeout(() => setCopySuccess(false), 2000);
   };
 
   const handleImportJson = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = ''; // allow choosing the same file again
     if (!file) return;
     setImportError(null);
+    if (file.size > MAX_SNAPSHOT_BYTES) {
+      setImportError('File is larger than 50 MB.');
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (event) => {
-      try {
-        const parsed = JSON.parse(event.target?.result as string);
-        if (parsed.memoryLattice) {
-          onUpdateMemory(parsed.memoryLattice);
-        } else {
-          setImportError('File format valid JSON, but missing memoryLattice property.');
-        }
-      } catch {
-        setImportError('Invalid session memory JSON file. Please provide a valid JSON export.');
-      }
+      const parsed = parseSnapshot(String(event.target?.result ?? ''));
+      if (!parsed.ok) setImportError(parsed.error);
+      else setPendingRestore(parsed); // confirm first: a restore replaces the current work
     };
+    reader.onerror = () => setImportError('Could not read the file.');
     reader.readAsText(file);
   };
 
@@ -138,6 +147,31 @@ export const SessionMemoryModal: React.FC<SessionMemoryModalProps> = ({
             </div>
           </div>
         </div>
+
+        {pendingRestore && (
+          <div className="p-3 rounded-xl bg-cyan-950/60 border border-cyan-700/60 text-xs font-mono text-cyan-100 space-y-2">
+            <p>
+              Restore {pendingRestore.summary}?{' '}
+              {pendingRestore.kind === 'snapshot'
+                ? 'This replaces the current playlist, logic and memory. Guard verdicts are not restored; run the guards again.'
+                : 'This replaces the memory keys only.'}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  onRestoreSnapshot(pendingRestore);
+                  setPendingRestore(null);
+                }}
+                className="px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold"
+              >
+                Restore
+              </button>
+              <button onClick={() => setPendingRestore(null)} className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300">
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         {importError && (
           <div className="p-3 rounded-xl bg-rose-950/80 border border-rose-700/60 text-xs font-mono text-rose-300 flex items-center justify-between">
@@ -222,12 +256,12 @@ export const SessionMemoryModal: React.FC<SessionMemoryModalProps> = ({
               className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-mono flex items-center gap-1.5 transition-colors"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>Export Snapshot JSON</span>
+              <span>Download Snapshot</span>
             </button>
 
             <label className="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-mono flex items-center gap-1.5 transition-colors cursor-pointer">
               <Upload className="w-3.5 h-3.5" />
-              <span>Import JSON</span>
+              <span>Restore Snapshot</span>
               <input
                 type="file"
                 accept=".json"

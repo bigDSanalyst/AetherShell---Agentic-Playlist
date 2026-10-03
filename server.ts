@@ -44,6 +44,7 @@ import {
   type SignedOwnerStatement,
 } from './server/exchange';
 import { RunLedger, type LedgerEntry } from './server/runLedger';
+import { GeminiUsage, classifyGeminiError, formatDuration, secondsUntilReset } from './server/geminiUsage';
 import { LearningStore, chooseArm, learningPromptBlock, lessonEffect, playlistKeyOf, synthesisOutcomes, armStats } from './server/learning';
 import { ledgerDrift } from './server/eprocess';
 import { diagnose } from './server/doctor';
@@ -250,6 +251,21 @@ const MODEL_CASCADE = (process.env.GEMINI_MODELS || 'gemini-3.1-flash-lite,gemin
   .filter(Boolean);
 const TRANSCRIBE_MODEL = process.env.GEMINI_TRANSCRIBE_MODEL || MODEL_CASCADE[0];
 
+// Gemini usage this quota day (server/geminiUsage.ts). Kept next to the ledger
+// so it survives restarts. Google does not report remaining quota; the limit is
+// shown only when the owner states it.
+const USAGE_PATH =
+  process.env.AETHERSHELL_USAGE_PATH ?? (LEDGER_PATH ? path.join(path.dirname(LEDGER_PATH), 'gemini-usage.json') : '');
+const geminiUsage = new GeminiUsage(USAGE_PATH || null);
+// Every model this server may call: the cascade plus the charter's guard reviewers.
+function usageModels(): string[] {
+  return [...new Set([...MODEL_CASCADE, ...(charterState.signed?.charter.guard.reviewModels ?? [])])];
+}
+const GEMINI_DAILY_LIMIT = (() => {
+  const n = Number(process.env.GEMINI_DAILY_REQUEST_LIMIT);
+  return Number.isInteger(n) && n > 0 ? n : null;
+})();
+
 class LlmUnavailableError extends Error {
   constructor(cause: unknown) {
     super(`Language model unavailable: ${(cause as any)?.message || String(cause)}`);
@@ -263,14 +279,27 @@ async function callGemini(options: { contents: any; config?: any; preferredModel
   const models = options.models ?? (preferred ? [preferred, ...MODEL_CASCADE.filter((m) => m !== preferred)] : MODEL_CASCADE);
   let lastError: unknown = new Error('No models configured');
   for (const model of models) {
+    // Google already said this model's daily quota is used up: a call would only be refused.
+    if (geminiUsage.dailyQuotaReached(model)) {
+      geminiUsage.record(model, 'skipped');
+      continue;
+    }
     try {
       const response = await ai.models.generateContent({ model, contents: options.contents, config: options.config });
+      geminiUsage.record(model, 'ok');
       if (response.text) return { text: response.text, modelUsed: model };
       lastError = new Error(`Empty response from ${model}`);
     } catch (err: any) {
       lastError = err;
+      geminiUsage.record(model, classifyGeminiError(err), err);
       console.warn(`[gemini] ${options.taskName} failed on ${model}: ${String(err?.message || err).slice(0, 160)}`);
     }
+  }
+  if (models.length && models.every((m) => geminiUsage.dailyQuotaReached(m))) {
+    lastError = new Error(
+      `Google reports the daily Gemini quota is used up for ${models.length === 1 ? models[0] : `all ${models.length} models`}; ` +
+        `it resets at midnight Pacific, in about ${formatDuration(secondsUntilReset(new Date()))}`
+    );
   }
   throw new LlmUnavailableError(lastError);
 }
@@ -1327,6 +1356,11 @@ Return JSON: { "passed": boolean, "score": 0-100, "decision": "APPROVED" | "QUAR
     res.json({ success: true, experiment: exp, shadowState });
   });
 
+  // Gemini usage this quota day, as far as this server can know it.
+  app.get('/api/gemini/usage', (_req: Request, res: Response) => {
+    res.json({ success: true, keySet: !!process.env.GEMINI_API_KEY, usage: geminiUsage.report(usageModels(), GEMINI_DAILY_LIMIT) });
+  });
+
   // What AetherTwin has learned, and the pass count it would choose next.
   app.get('/api/learning', (req: Request, res: Response) => {
     const key = typeof req.query.playlistKey === 'string' ? req.query.playlistKey.slice(0, 200) : undefined;
@@ -1488,6 +1522,7 @@ Return JSON: { "passed": boolean, "score": 0-100, "decision": "APPROVED" | "QUAR
         charter: { ok: charterState.ok, problems: charterState.problems, version: charterState.signed?.charter.version ?? null },
         exchange: exchangeCounts(),
         learning: { path: learningStore.filePath, ...learningStore.report(runLedger.all()) },
+        geminiQuota: geminiUsage.report(usageModels(), GEMINI_DAILY_LIMIT),
       })
     );
   });
