@@ -32,6 +32,29 @@ and check the logic against the transcript before it is accepted
 | Snapshots | Memory → "Download Snapshot" saves the working state (memory, playlist, transcripts, signed watermarks, logic) as JSON; "Restore Snapshot" loads it after a confirmation. Guard verdicts are never restored from a file: the ledger is their record, so run the guards again. Old memory-only exports still import. The header shows when memory was last saved in this browser. |
 | Learning (AetherTwin) | Each synthesis is recorded in the ledger (playlist, transcript and logic hashes, pass count, what it was shown). Guard verdicts on it then teach the next one: a rejection becomes a **lesson** (which checks failed, what the reviewer called unsupported), a pass by every guard becomes an **example**; the next synthesis of the same playlist is shown both, marked as data. With "Let AetherTwin choose" ticked, the pass count (1–5) is picked per playlist by a deterministic bandit (UCB1 over a pooled Beta prior) from the ledger alone. It learns only from logic this server synthesized; model outages and channel failures are not lessons; the owner's overrides win; every stored item is re-checked against the ledger when used, and `doctor` reports any that do not match. It never reads or changes the charter. Store: `data/learning.jsonl` (`AETHERSHELL_LEARNING_PATH`), a cache: deleting it loses lessons and examples, not evidence. `GET /api/learning`. |
 
+## How it fits together
+
+```mermaid
+flowchart LR
+  YT[YouTube captions] --> T[Transcript]
+  T --> RCL["RCL synthesis<br/>(Gemini, 1–5 passes)"]
+  L[("Learning store:<br/>lessons, examples")] -. shown as data .-> RCL
+  RCL --> SIG["Sign: Ed25519 over<br/>SHA-256(transcript) + SHA-256(logic)"]
+  SIG --> Z[DEFLATE compress]
+  Z --> GA[Guard Alpha]
+  Z --> GB["Guard Beta<br/>+ independent witness"]
+  C[["Owner-signed charter<br/>(guard settings)"]] --> GA & GB
+  GA --> V{Verdict}
+  GB --> V
+  V --> LED[("Run ledger<br/>hash-chained, Merkle head")]
+  RCL -- synthesis record --> LED
+  LED --> L
+  LED --> D[Drift monitor / doctor]
+  LED <--> X["Exchange:<br/>owner ⇄ system concerns,<br/>overrides"]
+```
+
+Only the owner's key changes the charter. Everything else reads the ledger; nothing rewrites it.
+
 ## Running locally
 
 ```bash
