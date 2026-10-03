@@ -5,6 +5,7 @@ import {
   FileText,
   Clock,
   User,
+  Calendar,
   Sparkles,
   Search,
   ExternalLink,
