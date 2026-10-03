@@ -35,6 +35,8 @@ Run lint and tests before every commit.
    sign a charter (the owner key is not on the server). If a guard setting
    looks wrong, propose the change with its reasoning
    (`npm run owner -- propose`) and leave the decision to the owner.
+   Concerns the system raises (`server/exchange.ts`) are proposals with
+   evidence; answering them is the owner's, never yours.
 3. **Model output is untrusted data.** It is never `eval`ed in the page; code
    runs only in `src/utils/sandbox.ts`. Prompts mark inputs as data.
 4. **The run ledger is evidence.** `data/ledger.jsonl` (or
@@ -51,6 +53,7 @@ Run lint and tests before every commit.
 | Signing, hashes, guard provenance checks | `server/provenance.ts` |
 | Guard Beta's independent verifier (must not import provenance.ts) | `server/witness.ts` |
 | Guard charter (owner-signed settings) | `server/charter.ts`, `scripts/owner.ts` |
+| Owner ⇄ system exchange (concerns, answers, overrides) | `server/exchange.ts`, `src/components/ExchangePanel.tsx` |
 | Run ledger, Merkle head/proofs | `server/runLedger.ts` |
 | Drift monitor (e-process) | `server/eprocess.ts` |
 | Deployment self-check | `server/doctor.ts`, `scripts/doctor.ts` |

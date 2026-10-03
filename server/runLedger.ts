@@ -21,7 +21,7 @@ import { canonicalJson, sha256Hex, type SigningKeys } from './provenance';
 export const LEDGER_FORMAT = 'aethershell-ledger/v1';
 export const GENESIS = '0'.repeat(64);
 
-export type LedgerEntryKind = 'bind' | 'guard' | 'charter';
+export type LedgerEntryKind = 'bind' | 'guard' | 'charter' | 'exchange';
 
 export interface LedgerEntry {
   format: typeof LEDGER_FORMAT;

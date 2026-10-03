@@ -10,6 +10,7 @@ import { ledgerDrift } from '../server/eprocess';
 import { diagnose, renderFindings } from '../server/doctor';
 import { envFloat } from '../server/http';
 import { loadCharterState, type LedgerCharterRecord } from '../server/charter';
+import { concerns } from '../server/exchange';
 
 dotenv.config({ quiet: true } as any);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -31,6 +32,10 @@ const result = diagnose({
   ledger: { path: ledger.filePath, size: ledger.size, ok: v.ok, problems: v.problems },
   drift: ledgerDrift(ledger.all(), envFloat('DRIFT_P0', 0.15), envFloat('DRIFT_ALPHA', 0.01)),
   charter: { ok: charter.ok, problems: charter.problems, version: charter.signed?.charter.version ?? null },
+  exchange: (() => {
+    const cs = concerns(ledger.all() as any);
+    return { awaitingOwner: cs.filter((c) => c.status === 'awaiting-owner').length, awaitingSystem: cs.filter((c) => c.status === 'awaiting-system').length };
+  })(),
 });
 console.log(process.argv.includes('--json') ? JSON.stringify(result, null, 2) : renderFindings(result));
 process.exit(result.status === 'ok' ? 0 : result.status === 'BLOCK' ? 1 : 2);

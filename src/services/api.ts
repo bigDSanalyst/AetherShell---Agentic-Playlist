@@ -417,3 +417,28 @@ export async function fetchCharterStatus(): Promise<CharterStatus> {
   if (!res.ok) throw new Error('Failed to read the guard charter');
   return res.json();
 }
+
+export interface ExchangeConcern {
+  id: string;
+  seq: number;
+  at: string;
+  from: 'owner' | 'system';
+  topic: string;
+  body: string;
+  evidence: unknown;
+  answers: { seq: number; at: string; from: 'owner' | 'system'; decision: string; reason: string }[];
+  status: 'awaiting-owner' | 'awaiting-system' | 'answered';
+}
+
+export async function fetchExchange(): Promise<{ concerns: ExchangeConcern[]; overrides: any[] }> {
+  const res = await apiFetch('/api/exchange');
+  if (!res.ok) throw new Error('Failed to read the exchange');
+  return res.json();
+}
+
+export async function requestSystemAnswer(id: string): Promise<{ decision: string; reason: string }> {
+  const res = await apiFetch(`/api/exchange/system-answer/${encodeURIComponent(id)}`, { method: 'POST' });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || 'The system could not answer');
+  return body;
+}
