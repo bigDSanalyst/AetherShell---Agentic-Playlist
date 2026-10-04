@@ -60,6 +60,7 @@ export async function fetchPlaylistData(params: {
   source: string;
   metadataNote?: string | null;
   transcriptCoverage?: { withTranscript: number; total: number };
+  transcriptProblems?: string | null; // why some videos have no transcript, grouped
 }> {
   const res = await apiFetch('/api/youtube/fetch-playlist', {
     method: 'POST',

@@ -135,7 +135,8 @@ export default function App() {
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setNotification({ message, type });
-    setTimeout(() => setNotification(null), 4000);
+    // Errors and partial results carry reasons worth reading; give them time.
+    setTimeout(() => setNotification(null), type === 'success' ? 4000 : 12000);
   };
 
   // Initial Load: Fetch curated playlists and default load the first one
@@ -172,6 +173,7 @@ export default function App() {
     const withText = res.playlist.videos.filter((v) => v.rawTranscript).length;
     showToast(
       `Ingested "${res.playlist.title}": captions for ${withText}/${res.playlist.videos.length} video(s)` +
+        (res.transcriptProblems ? ` · ${res.transcriptProblems}` : '') +
         (res.metadataNote ? ` · ${res.metadataNote}` : ''),
       withText === res.playlist.videos.length ? 'success' : 'info'
     );
