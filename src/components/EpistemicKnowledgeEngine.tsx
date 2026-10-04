@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { ClaimCheckPanel } from './ClaimCheckPanel';
 import {
   Brain,
   Sparkles,
@@ -172,6 +173,7 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
         (delta) => setChatMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: m.content + delta } : m)))
       );
       setCutVideos((res.corpusCoverage || []).filter((c) => !c.complete));
+      if (res.claimCheck) setChatMessages((prev) => prev.map((m) => (m.id === id ? { ...m, claimCheck: res.claimCheck } : m)));
     } catch (err: any) {
       // Drop the answer bubble if nothing arrived; keep partial text (the error says it is incomplete).
       setChatMessages((prev) => prev.filter((m) => !(m.id === streamId && !m.content)));
@@ -629,6 +631,7 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
                   >
                     {msg.content}
                   </div>
+                  {msg.claimCheck && <ClaimCheckPanel check={msg.claimCheck} />}
                   <span className="text-[9px] font-mono text-slate-500 mt-1 px-1">
                     {new Date(msg.timestamp).toLocaleTimeString([], {
                       hour: '2-digit',

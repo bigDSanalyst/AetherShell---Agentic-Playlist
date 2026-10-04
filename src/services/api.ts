@@ -9,6 +9,7 @@ import {
   GuardAuditReport,
   DualGuardComparisonReport,
   VideoNode,
+  ClaimCheck,
 } from '../types';
 
 const TOKEN_KEY = 'aethershell_access_token';
@@ -354,7 +355,7 @@ export async function sendSubjugatedChatMessage(params: {
 export async function streamSubjugatedChatMessage(
   params: { messages: { role: string; content: string }[]; playlistTitle?: string; videos: any[]; preferredModel?: string },
   onDelta: (text: string) => void
-): Promise<{ modelUsed: string | null; degraded?: boolean; corpusCoverage?: CorpusCoverage[]; timestamp: number }> {
+): Promise<{ modelUsed: string | null; degraded?: boolean; corpusCoverage?: CorpusCoverage[]; claimCheck?: ClaimCheck; timestamp: number }> {
   const res = await apiFetch('/api/knowledge/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
