@@ -12,6 +12,7 @@ import { EpistemicKnowledgeEngine } from './components/EpistemicKnowledgeEngine'
 import { AetherTwinParallel } from './components/AetherTwinParallel';
 import { AetherOutputHubModal } from './components/AetherOutputHubModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { mergeIntoSet } from './utils/collection';
 import {
   PlaylistData,
   VideoNode,
@@ -31,6 +32,7 @@ import {
   fetchPlaylistData,
   fetchVideoTranscriptFor,
   submitProvidedTranscript,
+  buildCollection,
   watermarkAndBindCrypto,
   runRclSsiCycle,
   validateWithGuardShell,
@@ -95,6 +97,21 @@ export default function App() {
     setModelFallbackState(on);
     try {
       localStorage.setItem('aethershell_model_fallback', on ? 'on' : 'off');
+    } catch {}
+  };
+
+  // Add newly ingested videos to the current set instead of replacing it.
+  const [addToSet, setAddToSetState] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('aethershell_add_to_set') !== 'off';
+    } catch {
+      return true;
+    }
+  });
+  const setAddToSet = (on: boolean) => {
+    setAddToSetState(on);
+    try {
+      localStorage.setItem('aethershell_add_to_set', on ? 'on' : 'off');
     } catch {}
   };
 
@@ -177,8 +194,11 @@ export default function App() {
     init();
   }, []);
 
-  const applyIngested = (res: Awaited<ReturnType<typeof fetchPlaylistData>>) => {
-    setPlaylist(res.playlist);
+  const applyIngested = async (res: Awaited<ReturnType<typeof fetchPlaylistData>>) => {
+    const merging = addToSet && !!playlist && !playlist.isDemo && !res.playlist.isDemo;
+    const before = playlist?.videos.length ?? 0;
+    const next = merging ? await mergeIntoSet(playlist!, res.playlist) : res.playlist;
+    setPlaylist(next);
     const firstWithText = res.playlist.videos.find((v) => v.rawTranscript) || res.playlist.videos[0];
     if (firstWithText) setActiveVideo(firstWithText);
     if (res.playlist.isDemo) {
@@ -194,7 +214,8 @@ export default function App() {
         ` (${bySource('youtube-captions')} YouTube captions${machine ? `, ${machine} machine-transcribed by Gemini` : ''}` +
         `${archived ? `; ${archived} from the archive, no quota used` : ''})` +
         (res.transcriptProblems ? ` · ${res.transcriptProblems}` : '') +
-        (res.metadataNote ? ` · ${res.metadataNote}` : ''),
+        (res.metadataNote ? ` · ${res.metadataNote}` : '') +
+        (merging ? ` · added ${next.videos.length - before} to the current set (now ${next.videos.length} videos)` : ''),
       withText === res.playlist.videos.length ? 'success' : 'info'
     );
   };
@@ -203,9 +224,28 @@ export default function App() {
   const handleIngestUrl = async (url: string) => {
     setIsLoading(true);
     try {
-      applyIngested(await fetchPlaylistData({ playlistUrl: url, modelFallback }));
+      await applyIngested(await fetchPlaylistData({ playlistUrl: url, modelFallback }));
     } catch (err: any) {
       showToast(err.message || 'Failed to ingest playlist', 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Combine videos from the transcript archive into one set (no fetch, no quota).
+  const handleLoadCollection = async (videoIds: string[], title?: string) => {
+    setIsLoading(true);
+    try {
+      const res = await buildCollection(videoIds, title);
+      setPlaylist(res.playlist);
+      if (res.playlist.videos[0]) setActiveVideo(res.playlist.videos[0]);
+      showToast(
+        `Loaded "${res.playlist.title}": ${res.playlist.videos.length} video(s) from the archive` +
+          (res.missing.length ? ` · ${res.missing.length} not in the archive: ${res.missing.join(', ')}` : ''),
+        res.missing.length ? 'info' : 'success'
+      );
+    } catch (err: any) {
+      showToast(err.message || 'Failed to combine the videos', 'error');
     } finally {
       setIsLoading(false);
     }
@@ -214,7 +254,7 @@ export default function App() {
   const handleLoadCurated = async (id: string) => {
     setIsLoading(true);
     try {
-      applyIngested(await fetchPlaylistData({ curatedId: id, modelFallback }));
+      await applyIngested(await fetchPlaylistData({ curatedId: id, modelFallback }));
     } catch (err: any) {
       showToast(err.message || 'Failed to load playlist', 'error');
     } finally {
@@ -687,6 +727,9 @@ export default function App() {
             onPasteTranscript={handlePasteTranscript}
             modelFallback={modelFallback}
             setModelFallback={setModelFallback}
+            addToSet={addToSet}
+            setAddToSet={setAddToSet}
+            onLoadCollection={handleLoadCollection}
             transcribeProgress={transcribeProgress}
             isLoading={isLoading}
             onProceedToInnershell={() => setActiveTab('innershell')}

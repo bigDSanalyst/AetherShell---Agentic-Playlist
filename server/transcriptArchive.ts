@@ -13,6 +13,8 @@ import type { IngestedVideo, TranscriptSegment } from './youtube';
 export interface ArchivedTranscript {
   videoId: string;
   title: string;
+  channel?: string;
+  duration?: string;
   source: 'youtube-captions' | 'model-transcription' | 'owner-provided';
   model: string | null;
   via: string;
@@ -53,6 +55,21 @@ export class TranscriptArchive {
     return this.byVideo.size;
   }
 
+  // One line per archived video, newest first (no transcript text).
+  list(): { videoId: string; title: string; source: ArchivedTranscript['source']; model: string | null; at: string; words: number; segments: number }[] {
+    return [...this.byVideo.values()]
+      .map((e) => ({
+        videoId: e.videoId,
+        title: e.title,
+        source: e.source,
+        model: e.model,
+        at: e.at,
+        words: e.rawTranscript.split(/\s+/).filter(Boolean).length,
+        segments: e.segments.length,
+      }))
+      .sort((a, b) => b.at.localeCompare(a.at));
+  }
+
   get(videoId: string): ArchivedTranscript | null {
     return this.byVideo.get(videoId) ?? null;
   }
@@ -66,6 +83,8 @@ export class TranscriptArchive {
     const e: ArchivedTranscript = {
       videoId: v.youtubeId,
       title: v.title,
+      ...(v.channel ? { channel: v.channel } : {}),
+      ...(v.duration ? { duration: v.duration } : {}),
       source: v.transcriptSource,
       model: v.transcriptMethod?.model ?? null,
       via: v.transcriptMethod?.via ?? 'youtube caption track',
@@ -89,6 +108,8 @@ export class TranscriptArchive {
     return {
       ...base,
       title: base.title && base.title !== base.youtubeId ? base.title : e.title,
+      channel: base.channel || e.channel || '',
+      duration: base.duration || e.duration || '',
       segments: e.segments,
       rawTranscript: e.rawTranscript,
       transcriptSource: e.source,
