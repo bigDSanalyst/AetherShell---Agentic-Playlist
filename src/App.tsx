@@ -29,7 +29,8 @@ import {
 import {
   fetchCuratedPlaylists,
   fetchPlaylistData,
-  fetchVideoCaptions,
+  fetchVideoTranscriptFor,
+  submitProvidedTranscript,
   watermarkAndBindCrypto,
   runRclSsiCycle,
   validateWithGuardShell,
@@ -82,6 +83,20 @@ export default function App() {
     currentTitle: string;
     percent: number;
   } | null>(null);
+  // When YouTube refuses captions, let Gemini transcribe the video (uses quota).
+  const [modelFallback, setModelFallbackState] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('aethershell_model_fallback') !== 'off';
+    } catch {
+      return true;
+    }
+  });
+  const setModelFallback = (on: boolean) => {
+    setModelFallbackState(on);
+    try {
+      localStorage.setItem('aethershell_model_fallback', on ? 'on' : 'off');
+    } catch {}
+  };
 
   // Multi-Session Persistent Memory
   const [sessionMemory, setSessionMemory] = useState<PersistentSessionMemory>(() => {
@@ -171,8 +186,11 @@ export default function App() {
       return;
     }
     const withText = res.playlist.videos.filter((v) => v.rawTranscript).length;
+    const bySource = (src: string) => res.playlist.videos.filter((v) => v.rawTranscript && v.transcriptSource === src).length;
+    const machine = bySource('model-transcription');
     showToast(
-      `Ingested "${res.playlist.title}": captions for ${withText}/${res.playlist.videos.length} video(s)` +
+      `Ingested "${res.playlist.title}": transcripts for ${withText}/${res.playlist.videos.length} video(s)` +
+        ` (${bySource('youtube-captions')} YouTube captions${machine ? `, ${machine} machine-transcribed by Gemini` : ''})` +
         (res.transcriptProblems ? ` · ${res.transcriptProblems}` : '') +
         (res.metadataNote ? ` · ${res.metadataNote}` : ''),
       withText === res.playlist.videos.length ? 'success' : 'info'
@@ -183,7 +201,7 @@ export default function App() {
   const handleIngestUrl = async (url: string) => {
     setIsLoading(true);
     try {
-      applyIngested(await fetchPlaylistData({ playlistUrl: url }));
+      applyIngested(await fetchPlaylistData({ playlistUrl: url, modelFallback }));
     } catch (err: any) {
       showToast(err.message || 'Failed to ingest playlist', 'error');
     } finally {
@@ -194,7 +212,7 @@ export default function App() {
   const handleLoadCurated = async (id: string) => {
     setIsLoading(true);
     try {
-      applyIngested(await fetchPlaylistData({ curatedId: id }));
+      applyIngested(await fetchPlaylistData({ curatedId: id, modelFallback }));
     } catch (err: any) {
       showToast(err.message || 'Failed to load playlist', 'error');
     } finally {
@@ -202,26 +220,43 @@ export default function App() {
     }
   };
 
-  const captionsToVideo = (video: VideoNode, segments: any[]): VideoNode => ({
+  // Keep the server's video exactly as it recorded it: the server signs the
+  // transcript's source by the hash of this text, so it must not be rebuilt here.
+  const serverVideoInto = (video: VideoNode, sv: Partial<VideoNode>): VideoNode => ({
     ...video,
-    segments,
-    rawTranscript: segments.map((s: any) => `[${s.start} - ${s.end}] ${s.speaker}: ${s.text}`).join('\n\n'),
-    transcriptSource: 'youtube-captions',
+    segments: sv.segments || [],
+    rawTranscript: sv.rawTranscript || '',
+    transcriptSource: sv.transcriptSource,
+    transcriptMethod: sv.transcriptMethod,
+    transcriptLanguage: sv.transcriptLanguage,
     transcriptError: undefined,
+    // A new transcript is no longer the one that was signed.
+    watermark: undefined,
+    compressedTranscript: undefined,
+    boundLogic: undefined,
   });
 
-  // Re-fetch YouTube captions for one video, or (no argument) for every video
-  // in the playlist, sequentially with progress. Never generates text.
-  const handleDeepTranscribe = async (targetVideo?: VideoNode) => {
+  const replaceVideos = (updated: Map<string, VideoNode>) => {
+    if (playlist) setPlaylist({ ...playlist, videos: playlist.videos.map((v) => updated.get(v.id) || v) });
+    if (activeVideo && updated.has(activeVideo.id)) setActiveVideo(updated.get(activeVideo.id)!);
+  };
+
+  // Get transcripts for one video, or (no argument) for the playlist, one at a
+  // time with progress. method "captions": YouTube's caption track, for every
+  // video. method "model": Gemini transcribes the video itself, only for videos
+  // that still have no transcript (it uses quota). Never generates text.
+  const handleDeepTranscribe = async (targetVideo?: VideoNode, method: 'captions' | 'model' = 'captions') => {
     if (playlist?.isDemo) {
-      showToast('Demo videos are not real YouTube videos; there are no captions to fetch', 'info');
+      showToast('Demo videos are not real YouTube videos; there is nothing to transcribe', 'info');
       return;
     }
-    const videosToProcess = targetVideo ? [targetVideo] : playlist?.videos || [];
+    const all = playlist?.videos || [];
+    const videosToProcess = targetVideo ? [targetVideo] : method === 'model' ? all.filter((v) => !v.rawTranscript) : all;
     if (videosToProcess.length === 0) {
-      showToast('No videos to fetch captions for', 'error');
+      showToast(method === 'model' ? 'Every video already has a transcript' : 'No videos to fetch captions for', 'info');
       return;
     }
+    const what = method === 'model' ? 'Gemini transcription' : 'captions';
 
     setIsLoading(true);
     const total = videosToProcess.length;
@@ -232,28 +267,40 @@ export default function App() {
         const v = videosToProcess[i];
         setTranscribeProgress({ current: i, total, currentTitle: v.title, percent: Math.round((i / total) * 100) });
         try {
-          const res = await fetchVideoCaptions({ youtubeId: v.youtubeId });
-          updated.set(v.id, captionsToVideo(v, res.segments || []));
+          const res = await fetchVideoTranscriptFor({ youtubeId: v.youtubeId, method, title: v.title });
+          updated.set(v.id, serverVideoInto(v, res.video));
           ok++;
         } catch (err: any) {
-          updated.set(v.id, { ...v, transcriptError: err?.message || 'Captions unavailable' });
+          updated.set(v.id, { ...v, transcriptError: err?.message || `No transcript (${what})` });
         }
       }
       setTranscribeProgress({ current: total, total, currentTitle: 'Done', percent: 100 });
-
-      if (playlist) {
-        setPlaylist({ ...playlist, videos: playlist.videos.map((v) => updated.get(v.id) || v) });
-      }
-      if (activeVideo && updated.has(activeVideo.id)) setActiveVideo(updated.get(activeVideo.id)!);
+      replaceVideos(updated);
 
       if (total === 1) {
-        showToast(ok ? `Re-fetched YouTube captions for "${videosToProcess[0].title}"` : `No captions: ${updated.get(videosToProcess[0].id)?.transcriptError}`, ok ? 'success' : 'error');
+        showToast(
+          ok ? `Got ${what} for "${videosToProcess[0].title}"` : `${updated.get(videosToProcess[0].id)?.transcriptError}`,
+          ok ? 'success' : 'error'
+        );
       } else {
-        showToast(`Fetched captions for ${ok}/${total} videos`, ok === total ? 'success' : 'info');
+        showToast(`Got ${what} for ${ok}/${total} videos`, ok === total ? 'success' : 'info');
       }
     } finally {
       setIsLoading(false);
       setTranscribeProgress(null);
+    }
+  };
+
+  // A transcript the owner pasted (e.g. from YouTube's "Show transcript" panel).
+  const handlePasteTranscript = async (video: VideoNode, text: string): Promise<boolean> => {
+    try {
+      const res = await submitProvidedTranscript({ youtubeId: video.youtubeId, text, title: video.title });
+      replaceVideos(new Map([[video.id, serverVideoInto(video, res.video)]]));
+      showToast(`Saved your pasted transcript for "${video.title}" (labelled owner-provided)`, 'success');
+      return true;
+    } catch (err: any) {
+      showToast(err.message || 'Failed to save the pasted transcript', 'error');
+      return false;
     }
   };
 
@@ -634,6 +681,9 @@ export default function App() {
             onLoadCurated={handleLoadCurated}
             onIngestUrl={handleIngestUrl}
             onDeepTranscribe={handleDeepTranscribe}
+            onPasteTranscript={handlePasteTranscript}
+            modelFallback={modelFallback}
+            setModelFallback={setModelFallback}
             transcribeProgress={transcribeProgress}
             isLoading={isLoading}
             onProceedToInnershell={() => setActiveTab('innershell')}

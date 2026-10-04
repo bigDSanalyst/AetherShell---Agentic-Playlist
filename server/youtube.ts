@@ -20,7 +20,9 @@ export interface IngestedVideo {
   url: string;
   segments: TranscriptSegment[];
   rawTranscript: string;
-  transcriptSource: 'youtube-captions' | 'unavailable';
+  // How the transcript was obtained (server/transcribe.ts). Never 'youtube-captions' unless it was.
+  transcriptSource: 'youtube-captions' | 'model-transcription' | 'owner-provided' | 'unavailable';
+  transcriptMethod?: { model?: string; via: string; at: string };
   transcriptLanguage?: string;
   transcriptError?: string;
   transcriptRefusal?: YouTubeRefusalKind; // set when YouTube refused the server rather than the video lacking captions

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Calendar, CheckCircle2, Clock, ExternalLink, ImageOff, Minimize2, ShieldCheck, AlertCircle } from 'lucide-react';
 import { VideoNode } from '../types';
 import { formatUploadDate, youtubeThumbnailUrl } from '../utils/youtube';
+import { transcriptSourceLabel } from '../utils/transcriptSource';
 
 interface VideoMetadataCardProps {
   video: VideoNode;
@@ -17,6 +18,7 @@ export const VideoMetadataCard: React.FC<VideoMetadataCardProps> = ({ video, ind
   const thumb = isDemo ? null : youtubeThumbnailUrl(video.youtubeId);
   const uploaded = formatUploadDate(video.uploadDate);
   const segCount = video.segments?.length || 0;
+  const source = transcriptSourceLabel(video, isDemo);
 
   return (
     <div
@@ -90,17 +92,24 @@ export const VideoMetadataCard: React.FC<VideoMetadataCardProps> = ({ video, ind
       <div className="flex flex-wrap items-center justify-between gap-1.5 px-3 py-1.5 border-t border-slate-800/80 bg-slate-950/40 text-[10px] font-mono">
         <div className="flex flex-wrap items-center gap-1.5">
           {segCount > 0 ? (
-            <span className="px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-800/50 flex items-center gap-1">
-              <CheckCircle2 className="w-2.5 h-2.5" />
-              {segCount} segments
-            </span>
+            <>
+              <span className="px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-800/50 flex items-center gap-1">
+                <CheckCircle2 className="w-2.5 h-2.5" />
+                {segCount} segments
+              </span>
+              {source && (
+                <span className={`px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700/60 ${source.className}`} title={source.detail}>
+                  {source.short}
+                </span>
+              )}
+            </>
           ) : (
             <span
               className="px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-800/50 flex items-center gap-1"
               title={video.transcriptError || 'No transcript'}
             >
               <AlertCircle className="w-2.5 h-2.5" />
-              No captions
+              No transcript
             </span>
           )}
           {video.watermark && (

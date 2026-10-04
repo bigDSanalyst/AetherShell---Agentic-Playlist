@@ -1,6 +1,7 @@
 # AetherShell
 
-Pull caption transcripts from YouTube, have Gemini derive an execution plan
+Pull transcripts of YouTube videos (captions, or Gemini transcribing the video
+itself when YouTube refuses), have Gemini derive an execution plan
 ("Innershell logic") from them, sign the transcript and the logic together,
 and check the logic against the transcript before it is accepted
 ("Guard Shell").
@@ -9,7 +10,7 @@ and check the logic against the transcript before it is accepted
 
 | Part | What it does |
 | --- | --- |
-| Ingestion | Fetches the video's **caption track** (`youtube-transcript-plus`). Playlists are listed with the YouTube Data API. A video without captions gets no transcript; nothing is generated. |
+| Ingestion | First the video's **caption track** (`youtube-transcript-plus`). If YouTube refuses the server (cloud IPs get "Sign in to confirm you're not a bot") or there are no captions, **Gemini transcribes the public video from its URL** (Google fetches it, not this server); this can be switched off, and uses Gemini quota. The owner can also paste a transcript. Each transcript is labelled *YouTube captions*, *Machine transcription · model* or *Owner-provided*; the server records the source in its ledger (`ingest`) and signs it into the manifest at bind. A machine transcription can mishear words, and the guards check the plan against the transcript, not the transcript against the video. Private or removed videos get no transcript. Playlists are listed with the YouTube Data API. |
 | Demo playlists | The two built-in playlists are **synthetic sample text** with placeholder video ids, labelled `[DEMO]` everywhere. |
 | RCL/SSI | N real Gemini passes (1–5). Pass 1 drafts the logic; later passes revise it against the transcript. The per-pass numbers are **measured**: content-word overlap with the transcript and change from the previous pass. |
 | Signing | Ed25519 signature (server-held key) over a manifest of SHA-256(transcript) and SHA-256(canonical logic JSON), made **before** DEFLATE compression. Public key at `GET /api/crypto/public-key`. |
@@ -38,6 +39,8 @@ and check the logic against the transcript before it is accepted
 ```mermaid
 flowchart LR
   YT[YouTube captions] --> T[Transcript]
+  GV["Gemini from video URL<br/>(labelled machine transcription)"] -.-> T
+  OP[Owner paste] -.-> T
   T --> RCL["RCL synthesis<br/>(Gemini, 1–5 passes)"]
   L[("Learning store:<br/>lessons, examples")] -. shown as data .-> RCL
   RCL --> SIG["Sign: Ed25519 over<br/>SHA-256(transcript) + SHA-256(logic)"]

@@ -17,6 +17,8 @@ export interface ProvenanceManifest {
   videoId: string | null;
   playlistId: string | null;
   createdAt: number;
+  // How the transcript was obtained, from the server's own ingest record (absent in older manifests).
+  transcriptSource?: string;
 }
 
 export interface SigningKeys {
@@ -145,7 +147,7 @@ export interface WatermarkResult {
 
 export function watermarkAndCompress(
   keys: SigningKeys,
-  input: { rawTranscript: string; logic?: unknown; videoId?: string; playlistId?: string },
+  input: { rawTranscript: string; logic?: unknown; videoId?: string; playlistId?: string; transcriptSource?: string },
   now: number = Date.now()
 ): WatermarkResult {
   // UTF-8 cannot carry a lone surrogate (it becomes U+FFFD), so the compressed
@@ -165,6 +167,7 @@ export function watermarkAndCompress(
     videoId: input.videoId ?? null,
     playlistId: input.playlistId ?? null,
     createdAt: now,
+    ...(input.transcriptSource ? { transcriptSource: input.transcriptSource } : {}),
   };
   // The signature covers the logic hash, and is produced before compression.
   const signature = signManifest(keys, manifest);
