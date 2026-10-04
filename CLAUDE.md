@@ -26,9 +26,13 @@ Run lint and tests before every commit.
 
 ## Rules this codebase depends on
 
-1. **Nothing is invented to fill a gap.** No generated transcripts, no
-   default scores, no "APPROVED"/"VERIFIED" fallbacks. Missing data is shown
-   as missing ("not run", "unknown"). A check that could not run fails closed.
+1. **Nothing is invented to fill a gap.** Transcripts are never invented. A
+   machine transcription of the video's actual audio is allowed only when
+   labelled with method and model, never presented as captions; the server
+   records each transcript's source in the ledger and signs it at bind
+   (`server/transcribe.ts`). No default scores, no "APPROVED"/"VERIFIED"
+   fallbacks. Missing data is shown as missing ("not run", "unknown"). A check
+   that could not run fails closed.
 2. **Only the owner changes the guards.** Guard settings live in the
    owner-signed charter (`server/charter.ts`); never read them from the
    environment, hardcode a bypass, or relax a fail-closed branch. You cannot
@@ -60,6 +64,8 @@ Run lint and tests before every commit.
 | Drift monitor (e-process) | `server/eprocess.ts` |
 | Deployment self-check | `server/doctor.ts`, `scripts/doctor.ts` |
 | YouTube captions / playlists | `server/youtube.ts` |
+| Transcripts not from captions (Gemini from the video URL, owner paste) and their recorded source | `server/transcribe.ts`, `src/utils/transcriptSource.ts` |
+| Transcript archive (each video transcribed once; hash-checked on load) | `server/transcriptArchive.ts`, `data/transcripts.jsonl` |
 | GitHub guard URL validation | `server/github.ts` |
 | Browser sandbox for untrusted code | `src/utils/sandbox.ts` |
 | Playlist JSON export | `src/utils/playlistExport.ts` |

@@ -8,6 +8,7 @@ import {
   SynthesisLearning,
   GuardAuditReport,
   DualGuardComparisonReport,
+  VideoNode,
 } from '../types';
 
 const TOKEN_KEY = 'aethershell_access_token';
@@ -55,6 +56,7 @@ export async function fetchCuratedPlaylists(): Promise<CuratedPlaylistSummary[]>
 export async function fetchPlaylistData(params: {
   playlistUrl?: string;
   curatedId?: string;
+  modelFallback?: boolean; // when YouTube refuses, let Gemini transcribe the video (uses quota)
 }): Promise<{
   playlist: PlaylistData;
   source: string;
@@ -74,8 +76,14 @@ export async function fetchPlaylistData(params: {
   return res.json();
 }
 
-// Re-fetches a video's caption transcript from YouTube.
-export async function fetchVideoCaptions(params: { youtubeId: string }): Promise<{ segments: any[]; summary: string }> {
+// Fetches one video's transcript: "captions" asks YouTube for its caption track,
+// "model" has Gemini transcribe the video itself. Returns the server's video
+// exactly as it recorded it (its text is what the server will sign).
+export async function fetchVideoTranscriptFor(params: {
+  youtubeId: string;
+  method?: 'captions' | 'model';
+  title?: string;
+}): Promise<{ segments: any[]; source: VideoNode['transcriptSource']; video: Partial<VideoNode> }> {
   const res = await apiFetch('/api/youtube/transcribe', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -83,7 +91,25 @@ export async function fetchVideoCaptions(params: { youtubeId: string }): Promise
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Failed to fetch captions');
+    throw new Error(err.error || 'Failed to fetch transcript');
+  }
+  return res.json();
+}
+
+// A transcript the owner pasted; recorded as owner-provided.
+export async function submitProvidedTranscript(params: {
+  youtubeId: string;
+  text: string;
+  title?: string;
+}): Promise<{ segments: any[]; source: VideoNode['transcriptSource']; video: Partial<VideoNode> }> {
+  const res = await apiFetch('/api/youtube/provided-transcript', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to save the pasted transcript');
   }
   return res.json();
 }

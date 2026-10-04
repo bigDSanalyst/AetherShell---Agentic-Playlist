@@ -18,10 +18,13 @@ import {
   Copy,
   Check,
   Brain,
+  Mic,
+  ClipboardPaste,
 } from 'lucide-react';
 import { PlaylistData, VideoNode, CuratedPlaylistSummary } from '../types';
 import { VideoMetadataCard } from './VideoMetadataCard';
 import { copyText } from '../utils/clipboard';
+import { transcriptSourceLabel } from '../utils/transcriptSource';
 
 interface PlaylistIngestionProps {
   playlist: PlaylistData | null;
@@ -30,7 +33,10 @@ interface PlaylistIngestionProps {
   setActiveVideo: (video: VideoNode) => void;
   onLoadCurated: (id: string) => void;
   onIngestUrl: (url: string) => void;
-  onDeepTranscribe: (video?: VideoNode) => void;
+  onDeepTranscribe: (video?: VideoNode, method?: 'captions' | 'model') => void;
+  onPasteTranscript: (video: VideoNode, text: string) => Promise<boolean>;
+  modelFallback: boolean;
+  setModelFallback: (on: boolean) => void;
   transcribeProgress?: { current: number; total: number; currentTitle: string; percent: number } | null;
   isLoading: boolean;
   onProceedToInnershell: () => void;
@@ -45,6 +51,9 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
   onLoadCurated,
   onIngestUrl,
   onDeepTranscribe,
+  onPasteTranscript,
+  modelFallback,
+  setModelFallback,
   transcribeProgress,
   isLoading,
   onProceedToInnershell,
@@ -53,6 +62,18 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
   const [inputUrl, setInputUrl] = useState('');
   const [copiedTranscript, setCopiedTranscript] = useState(false);
   const [filterQuery, setFilterQuery] = useState('');
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+
+  const handlePaste = async () => {
+    if (!activeVideo || !pasteText.trim()) return;
+    if (await onPasteTranscript(activeVideo, pasteText)) {
+      setPasteText('');
+      setPasteOpen(false);
+    }
+  };
+  const missing = (playlist?.videos || []).filter((v) => !v.rawTranscript).length;
+  const activeLabel = activeVideo ? transcriptSourceLabel(activeVideo) : null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -86,10 +107,10 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
               </span>
               <div>
                 <h2 className="text-base font-semibold text-slate-100 flex items-center gap-2">
-                  YouTube Playlist Ingestion (Caption Transcripts)
+                  YouTube Playlist Ingestion (Transcripts)
                 </h2>
                 <p className="text-xs text-slate-400">
-                  Pull caption transcripts from YouTube videos and playlists (no captions, no transcript; nothing is generated), then prepare them for RCL/SSI synthesis.
+                  Pull transcripts from YouTube videos and playlists: YouTube's captions first; if YouTube refuses, Gemini can transcribe the video itself, or you can paste the transcript. Every transcript is labelled with where it came from; nothing is invented.
                 </p>
               </div>
             </div>
@@ -148,6 +169,15 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
             )}
           </button>
         </form>
+        <label className="mt-2 flex items-center gap-2 text-[11px] font-mono text-slate-400 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={modelFallback}
+            onChange={(e) => setModelFallback(e.target.checked)}
+            className="accent-cyan-500"
+          />
+          If YouTube refuses or a video has no captions, transcribe it with Gemini (labelled machine transcription; uses Gemini quota)
+        </label>
 
         {playlist && (
           <div className="mt-4 pt-3 border-t border-slate-800/60 flex flex-wrap items-center justify-between text-xs text-slate-400">
@@ -174,6 +204,18 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
                   <span>Re-fetch All Captions</span>
                 </button>
               )}
+              {!playlist.isDemo && missing > 0 && (
+                <button
+                  type="button"
+                  onClick={() => onDeepTranscribe(undefined, 'model')}
+                  disabled={isLoading}
+                  className="px-3 py-1 rounded-lg bg-violet-950/60 hover:bg-violet-900/80 border border-violet-700/60 text-violet-300 font-mono text-[11px] flex items-center gap-1.5 transition-all disabled:opacity-50"
+                  title="Have Gemini transcribe each video that still has no transcript (uses Gemini quota)"
+                >
+                  <Mic className="w-3.5 h-3.5 text-violet-400" />
+                  <span>Transcribe {missing} Missing with Gemini</span>
+                </button>
+              )}
               <a
                 href={playlist.url}
                 target="_blank"
@@ -192,7 +234,7 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
             <div className="flex items-center justify-between text-xs font-mono text-cyan-300">
               <span className="flex items-center gap-2">
                 <span className="w-3.5 h-3.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin" />
-                Fetching captions
+                Getting transcripts
               </span>
               <span>
                 {transcribeProgress.current} / {transcribeProgress.total} · {transcribeProgress.percent}%
@@ -259,8 +301,13 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
                       {activeVideo.title}
                     </h3>
                     <p className="text-xs text-slate-400 font-mono mt-0.5">
-                      Channel: {activeVideo.channel} • Duration: {activeVideo.duration}
+                      Channel: {activeVideo.channel || 'unknown'} • Duration: {activeVideo.duration || 'unknown'}
                     </p>
+                    {activeLabel && (
+                      <p className={`text-[11px] font-mono mt-1 ${activeLabel.className}`} title={activeLabel.detail}>
+                        Transcript: {activeLabel.text}
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -272,6 +319,26 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
                     >
                       <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
                       <span>Re-fetch Captions</span>
+                    </button>
+
+                    <button
+                      onClick={() => onDeepTranscribe(activeVideo, 'model')}
+                      disabled={isLoading || !!playlist?.isDemo}
+                      className="px-3 py-1.5 rounded-lg bg-violet-950 hover:bg-violet-900 border border-violet-700/60 text-violet-300 text-xs font-mono flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                      title="Have Gemini watch this video by its URL and transcribe it (labelled machine transcription; uses Gemini quota)"
+                    >
+                      <Mic className="w-3.5 h-3.5 text-violet-400" />
+                      <span>Transcribe with Gemini</span>
+                    </button>
+
+                    <button
+                      onClick={() => setPasteOpen((o) => !o)}
+                      disabled={isLoading || !!playlist?.isDemo}
+                      className="p-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:text-white transition-colors disabled:opacity-50"
+                      title="Paste a transcript yourself (e.g. from the Show transcript panel on YouTube)"
+                      aria-expanded={pasteOpen}
+                    >
+                      <ClipboardPaste className="w-4 h-4" />
                     </button>
 
                     <button
@@ -288,11 +355,42 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
                   </div>
                 </div>
 
+                {pasteOpen && (
+                  <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-700 space-y-2">
+                    <p className="text-[11px] text-slate-400">
+                      Paste this video's transcript, e.g. from YouTube's "…more → Show transcript" panel. It is saved as{' '}
+                      <span className="text-amber-300">owner-provided</span>, never as YouTube captions. Lines starting with a time (1:23) keep it.
+                    </p>
+                    <textarea
+                      value={pasteText}
+                      onChange={(e) => setPasteText(e.target.value)}
+                      rows={6}
+                      placeholder="0:00 Welcome back to the channel…"
+                      className="w-full p-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 placeholder-slate-500 font-mono focus:outline-none focus:border-cyan-500"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={() => setPasteOpen(false)}
+                        className="px-3 py-1 rounded-lg border border-slate-700 text-slate-400 text-xs font-mono"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={handlePaste}
+                        disabled={isLoading || pasteText.trim().length < 20}
+                        className="px-3 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-slate-950 text-xs font-mono font-semibold disabled:opacity-50"
+                      >
+                        Save transcript
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Segments View */}
                 {activeVideo.segments && activeVideo.segments.length > 0 ? (
                   <div className="space-y-3">
                     <div className="flex items-center justify-between text-xs font-mono text-slate-400">
-                      <span>Timestamped Speech Segments ({activeVideo.segments.length})</span>
+                      <span>Speech Segments ({activeVideo.segments.length})</span>
                       <span className="text-cyan-400">
                         Total Words: {activeVideo.rawTranscript?.split(/\s+/).length || 0}
                       </span>
@@ -310,7 +408,7 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
                               {seg.speaker}
                             </span>
                             <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px]">
-                              {seg.start} - {seg.end}
+                              {seg.start ? (seg.end ? `${seg.start} - ${seg.end}` : seg.start) : 'no time given'}
                             </span>
                           </div>
                           <p className="text-xs text-slate-300 leading-relaxed font-sans">
@@ -326,8 +424,8 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
                     <p className="text-xs text-slate-300 font-medium">No transcript for this video</p>
                     <p className="text-[11px] text-slate-500 mt-1">
                       {activeVideo.transcriptError
-                        ? `YouTube returned no captions: ${activeVideo.transcriptError}`
-                        : 'Click "Re-fetch Captions" to try the YouTube caption track again.'}
+                        ? activeVideo.transcriptError
+                        : 'Re-fetch the captions, transcribe the video with Gemini, or paste the transcript.'}
                     </p>
                   </div>
                 )}

@@ -22,8 +22,10 @@ To check a running deployment (keys, charter, ledger, quota), run
 
 These are in [CLAUDE.md](CLAUDE.md); a change that breaks one will not be merged.
 
-1. **Nothing is invented to fill a gap.** No generated transcripts, default
-   scores, or "APPROVED"/"VERIFIED" fallbacks. Missing data is shown as
+1. **Nothing is invented to fill a gap.** Transcripts are never invented. A
+   machine transcription of the video's actual audio is allowed only when
+   labelled with method and model, never presented as captions. No default
+   scores or "APPROVED"/"VERIFIED" fallbacks. Missing data is shown as
    missing. A check that cannot run fails closed.
 2. **Only the owner changes the guards.** Guard settings live in the
    owner-signed charter (`server/charter.ts`). Do not read them from the

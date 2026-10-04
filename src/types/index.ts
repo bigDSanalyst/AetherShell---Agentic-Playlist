@@ -52,7 +52,12 @@ export interface VideoNode {
   segments?: TranscriptSegment[];
   watermark?: WatermarkData;
   compressedTranscript?: CompressedTranscriptData;
-  transcriptSource?: 'youtube-captions' | 'unavailable';
+  // youtube-captions: YouTube's caption track. model-transcription: a model
+  // transcribed the video's audio (transcriptMethod names it). owner-provided:
+  // pasted by the owner. The server records which, and signs it at bind.
+  transcriptSource?: 'youtube-captions' | 'model-transcription' | 'owner-provided' | 'unavailable';
+  transcriptMethod?: { model?: string; via: string; at: string };
+  fromArchive?: boolean; // read from the server's transcript archive (no new fetch or quota)
   transcriptLanguage?: string;
   transcriptError?: string;
   uploadDate?: string; // ISO 8601 from the YouTube Data API; absent when unknown
