@@ -32,7 +32,7 @@ import {
 } from '../types';
 import {
   synthesizePlaylistKnowledge,
-  sendSubjugatedChatMessage,
+  streamSubjugatedChatMessage,
   transcribeMicrophoneAudio,
   fetchModels,
   type ModelInfo,
@@ -154,26 +154,27 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
     setChatMessages(newMessages);
     setUserChatInput('');
     setIsChatLoading(true);
+    let streamId = '';
 
     try {
-      const res = await sendSubjugatedChatMessage({
-        messages: newMessages.map((m) => ({ role: m.role, content: m.content })),
-        playlistTitle: playlist.title,
-        videos: playlist.videos,
-        subjugationStrictness: 0.95,
-        preferredModel: selectedModel,
-      });
-
+      // The answer appears as it is written.
+      const id = `model-${Date.now()}`;
+      streamId = id;
+      setChatMessages((prev) => [...prev, { id, role: 'model', content: '', timestamp: Date.now() }]);
+      setIsChatLoading(false);
+      const res = await streamSubjugatedChatMessage(
+        {
+          messages: newMessages.map((m) => ({ role: m.role, content: m.content })),
+          playlistTitle: playlist.title,
+          videos: playlist.videos,
+          preferredModel: selectedModel,
+        },
+        (delta) => setChatMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: m.content + delta } : m)))
+      );
       setCutVideos((res.corpusCoverage || []).filter((c) => !c.complete));
-      const modelMsg: ChatMessage = {
-        id: `model-${Date.now()}`,
-        role: 'model',
-        content: res.reply,
-        timestamp: res.timestamp,
-      };
-
-      setChatMessages((prev) => [...prev, modelMsg]);
     } catch (err: any) {
+      // Drop the answer bubble if nothing arrived; keep partial text (the error says it is incomplete).
+      setChatMessages((prev) => prev.filter((m) => !(m.id === streamId && !m.content)));
       const errorMsg: ChatMessage = {
         id: `err-${Date.now()}`,
         role: 'model',

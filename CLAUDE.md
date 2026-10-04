@@ -71,6 +71,6 @@ Run lint and tests before every commit.
 | Browser sandbox for untrusted code | `src/utils/sandbox.ts` |
 | Playlist JSON export | `src/utils/playlistExport.ts` |
 | Model providers (Gemini, local/open-source, OpenRouter, OpenAI) | `server/models.ts` |
-| Gemini usage / quota tracking | `server/geminiUsage.ts`, `src/components/DashboardWidget.tsx` |
+| Gemini usage / quota tracking; measured call times; shared transcript block | `server/geminiUsage.ts`, `server/latency.ts`, `src/components/DashboardWidget.tsx` |
 | Work snapshots (download / restore) | `src/utils/snapshot.ts`, `src/components/SessionMemoryModal.tsx` |
 | Bitcoin-anchored timestamps (OpenTimestamps) | `scripts/anchor.ts`, `anchors/` |

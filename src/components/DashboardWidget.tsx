@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Gauge, RefreshCw } from 'lucide-react';
-import { fetchGeminiUsage, type GeminiUsageReport } from '../services/api';
+import { fetchGeminiUsage, type GeminiUsageReport, type TaskLatency } from '../services/api';
 
 // Model usage today, as far as this server can know it. Providers do not tell
 // apps how much quota is left, so the bar appears only when the owner has
@@ -10,7 +10,7 @@ import { fetchGeminiUsage, type GeminiUsageReport } from '../services/api';
 const fmt = (s: number) => `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 
 export const DashboardWidget: React.FC = () => {
-  const [data, setData] = useState<{ providers: string[]; usage: GeminiUsageReport } | null>(null);
+  const [data, setData] = useState<{ providers: string[]; usage: GeminiUsageReport; latency?: TaskLatency[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = () =>
@@ -100,6 +100,35 @@ export const DashboardWidget: React.FC = () => {
               ? `Gemini limit ${u.dailyLimit} requests per model per day, as you stated it; check it in AI Studio → Rate Limit.`
               : 'To see a bar, set GEMINI_DAILY_REQUEST_LIMIT to the requests-per-day limit shown in AI Studio → Rate Limit.'}
           </p>
+
+          {data?.latency && data.latency.length > 0 && (
+            <div className="space-y-1 pt-2 border-t border-slate-800">
+              <div className="text-slate-300 font-bold uppercase tracking-wider text-[10px]">Response times (measured)</div>
+              <table className="w-full text-[10px]">
+                <thead className="text-slate-500">
+                  <tr>
+                    <th className="text-left font-normal">task</th>
+                    <th className="text-right font-normal">calls</th>
+                    <th className="text-right font-normal">median</th>
+                    <th className="text-right font-normal">slowest 10%</th>
+                    <th className="text-right font-normal">first words</th>
+                  </tr>
+                </thead>
+                <tbody className="text-slate-300">
+                  {data.latency.map((l) => (
+                    <tr key={l.task} title={`last: ${(l.lastMs / 1000).toFixed(1)}s on ${l.lastModel}`}>
+                      <td>{l.task}</td>
+                      <td className="text-right">{l.calls}</td>
+                      <td className="text-right">{(l.medianMs / 1000).toFixed(1)}s</td>
+                      <td className="text-right">{(l.p90Ms / 1000).toFixed(1)}s</td>
+                      <td className="text-right">{l.firstTokenMedianMs !== null ? `${(l.firstTokenMedianMs / 1000).toFixed(1)}s` : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="text-[10px] text-slate-500 font-sans">Since the server started. "first words" is for streamed chat answers.</p>
+            </div>
+          )}
         </>
       )}
     </div>
