@@ -1,4 +1,4 @@
-import { fetchTranscript, type TranscriptSegment as YtSegment } from 'youtube-transcript-plus';
+import { fetchTranscript, type FetchParams, type TranscriptSegment as YtSegment } from 'youtube-transcript-plus';
 
 // Real YouTube ingestion: transcripts come from the video's caption track, and
 // playlist contents come from the YouTube Data API. Nothing here generates text.
@@ -23,6 +23,7 @@ export interface IngestedVideo {
   transcriptSource: 'youtube-captions' | 'unavailable';
   transcriptLanguage?: string;
   transcriptError?: string;
+  transcriptRefusal?: YouTubeRefusalKind; // set when YouTube refused the server rather than the video lacking captions
   uploadDate?: string; // ISO 8601, only when the YouTube Data API provided it
 }
 
@@ -118,10 +119,109 @@ export function segmentsToRaw(segments: TranscriptSegment[]): string {
   return segments.map((s) => `[${s.start} - ${s.end}] ${s.speaker}: ${s.text}`).join('\n\n');
 }
 
+// --- What YouTube actually said --------------------------------------------------
+//
+// From cloud servers (AI Studio, Colab, Cloud Run) YouTube often answers
+// "Sign in to confirm you're not a bot" instead of the video. The caption
+// library reports that as "no transcripts are available ... the video does not
+// have captions", which sends people looking for a captions problem that is
+// not there. These hooks read YouTube's own answer and report it as it is.
+
+export type YouTubeRefusalKind = 'bot-check' | 'consent' | 'rate-limit' | 'restricted' | 'unavailable';
+
+export class YouTubeRefusalError extends Error {
+  constructor(readonly kind: YouTubeRefusalKind, readonly reason: string) {
+    super(
+      kind === 'bot-check'
+        ? `YouTube refused this server ("${reason}"). YouTube does this to many cloud servers (AI Studio, Colab, Cloud Run); the video's captions were never seen. To ingest it, run the server from a home or mobile connection instead of a cloud server.`
+        : kind === 'consent'
+        ? 'YouTube answered with its cookie-consent page instead of the video (common for servers in the EU); the captions were never seen.'
+        : kind === 'rate-limit'
+        ? 'YouTube is rate-limiting this server (too many requests); try again later.'
+        : `YouTube: ${reason}`
+    );
+  }
+}
+
+const BOT_RE = /confirm (that )?you('|’)?re not a bot|sign in to confirm/i;
+
+export function classifyPlayability(ps: any): YouTubeRefusalError | null {
+  const status = String(ps?.status ?? '');
+  if (!status || status === 'OK') return null;
+  const reason = String(ps?.reason || ps?.messages?.[0] || ps?.errorScreen?.playerErrorMessageRenderer?.reason?.simpleText || status);
+  if (BOT_RE.test(reason) || (status === 'LOGIN_REQUIRED' && !/private|age/i.test(reason))) return new YouTubeRefusalError('bot-check', reason);
+  if (status === 'LOGIN_REQUIRED' || status === 'AGE_CHECK_REQUIRED' || status === 'CONTENT_CHECK_REQUIRED') return new YouTubeRefusalError('restricted', reason);
+  return new YouTubeRefusalError('unavailable', reason);
+}
+
+export function classifyWatchPage(finalUrl: string, html: string): YouTubeRefusalError | null {
+  if (/consent\.youtube\.com|consent\.google\./.test(finalUrl) || html.includes('action="https://consent.youtube.com')) return new YouTubeRefusalError('consent', 'consent page');
+  if (html.includes('class="g-recaptcha"') || /\/sorry\/index/.test(finalUrl)) return new YouTubeRefusalError('rate-limit', 'captcha');
+  if (BOT_RE.test(html) && !html.includes('INNERTUBE_API_KEY')) return new YouTubeRefusalError('bot-check', "Sign in to confirm you're not a bot");
+  return null;
+}
+
+function plainFetch(p: FetchParams) {
+  return fetch(p.url, {
+    method: p.method ?? 'GET',
+    headers: {
+      'User-Agent':
+        p.userAgent || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      ...(p.lang ? { 'Accept-Language': p.lang } : {}),
+      ...(p.headers ?? {}),
+    },
+    body: p.body,
+    signal: p.signal,
+  });
+}
+
+// Hooks for the caption library: same requests, but YouTube's refusals are named.
+export function inspectingFetchers(doFetch: (p: FetchParams) => Promise<Response> = plainFetch) {
+  return {
+    videoFetch: async (p: FetchParams) => {
+      const res = await doFetch(p);
+      if (res.status === 429) throw new YouTubeRefusalError('rate-limit', 'HTTP 429');
+      const refusal = classifyWatchPage(res.url || p.url, await res.clone().text());
+      if (refusal) throw refusal;
+      return res;
+    },
+    playerFetch: async (p: FetchParams) => {
+      const res = await doFetch(p);
+      if (res.status === 429) throw new YouTubeRefusalError('rate-limit', 'HTTP 429');
+      const json = await res.clone().json().catch(() => null);
+      const refusal = classifyPlayability(json?.playabilityStatus);
+      if (refusal) throw refusal;
+      return res;
+    },
+    transcriptFetch: (p: FetchParams) => doFetch(p),
+  };
+}
+
+// Why videos came back without transcripts, grouped, worst first. A refusal of
+// the server (bot check, consent page, rate limit) is named as such, because the
+// fix is where the server runs, not the videos.
+export function summarizeTranscriptFailures(videos: IngestedVideo[]): string | null {
+  const failed = videos.filter((v) => v.transcriptSource !== 'youtube-captions');
+  if (!failed.length) return null;
+  const refused = failed.filter((v) => v.transcriptRefusal && v.transcriptRefusal !== 'restricted' && v.transcriptRefusal !== 'unavailable');
+  const groups = new Map<string, number>();
+  for (const v of failed) {
+    const key = v.transcriptError || 'Transcript unavailable';
+    groups.set(key, (groups.get(key) ?? 0) + 1);
+  }
+  const lines = [...groups.entries()].sort((a, b) => b[1] - a[1]).map(([msg, n]) => `${n} of ${videos.length}: ${msg}`);
+  const head =
+    refused.length === failed.length
+      ? `YouTube refused this server for all ${failed.length} video(s) without a transcript; the videos were not checked for captions.`
+      : `${failed.length} of ${videos.length} video(s) have no transcript.`;
+  return [head, ...lines.slice(0, 4)].join(' ');
+}
+
 export async function fetchVideoTranscript(
   videoId: string,
   meta: { title?: string; channel?: string } = {},
-  lang = process.env.YOUTUBE_TRANSCRIPT_LANG || undefined
+  lang = process.env.YOUTUBE_TRANSCRIPT_LANG || undefined,
+  doFetch?: (p: FetchParams) => Promise<Response> // tests inject YouTube's answers here
 ): Promise<IngestedVideo> {
   const base: IngestedVideo = {
     id: `yt-${videoId}`,
@@ -135,7 +235,7 @@ export async function fetchVideoTranscript(
     transcriptSource: 'unavailable',
   };
   try {
-    const result = await fetchTranscript(videoId, { videoDetails: true, lang, retries: 1 });
+    const result = await fetchTranscript(videoId, { videoDetails: true, lang, retries: 1, ...inspectingFetchers(doFetch) });
     const segments = groupCaptionCues(result.segments);
     if (segments.length === 0) throw new Error('Caption track is empty');
     return {
@@ -149,7 +249,11 @@ export async function fetchVideoTranscript(
       transcriptLanguage: result.segments[0]?.lang,
     };
   } catch (err: any) {
-    return { ...base, transcriptError: err?.message || 'Transcript unavailable' };
+    return {
+      ...base,
+      transcriptError: err?.message || 'Transcript unavailable',
+      ...(err instanceof YouTubeRefusalError ? { transcriptRefusal: err.kind } : {}),
+    };
   }
 }
 
@@ -241,8 +345,11 @@ export async function scrapePlaylistListing(playlistId: string, maxVideos: numbe
     },
     signal: AbortSignal.timeout(15_000),
   });
+  if (res.status === 429) throw new YouTubeRefusalError('rate-limit', 'HTTP 429');
   if (!res.ok) throw new Error(`YouTube returned HTTP ${res.status} for the playlist page`);
   const html = await res.text();
+  const refusal = classifyWatchPage(res.url, html);
+  if (refusal && !html.includes('var ytInitialData = ')) throw refusal;
   return parsePlaylistPage(html, maxVideos, playlistId);
 }
 

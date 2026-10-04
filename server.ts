@@ -14,6 +14,7 @@ import {
   type IngestedVideo,
   mapWithConcurrency,
   parseYouTubeUrl,
+  summarizeTranscriptFailures,
 } from './server/youtube';
 import { MalformedTextError, hashLogic, hashTranscript, loadSigningKeys, verifyProvenance, watermarkAndCompress } from './server/provenance';
 import { bigramOverlap, changeBetween, contentTokens, logicClaimText, round4, wordOverlap } from './server/grounding';
@@ -779,6 +780,7 @@ async function startServer() {
             success: true,
             source: 'youtube-captions',
             transcriptCoverage: { withTranscript: withText, total: videos.length },
+            transcriptProblems: summarizeTranscriptFailures(videos),
             metadataNote,
             playlist: { id: preset.id, title: preset.title, description: preset.description, url: preset.url, videos },
           });
@@ -802,7 +804,10 @@ async function startServer() {
         const { videos, metadataNote } = await ingestVideos([{ videoId: parsed.videoId }]);
         const video = videos[0];
         if (video.transcriptSource === 'unavailable') {
-          return res.status(422).json({ error: `No transcript available for ${parsed.videoId}: ${video.transcriptError}` });
+          return res.status(422).json({
+            error: `No transcript for ${parsed.videoId}: ${video.transcriptError}`,
+            refusal: video.transcriptRefusal ?? null,
+          });
         }
         return res.json({
           success: true,
@@ -817,18 +822,25 @@ async function startServer() {
       const listing = apiKey
         ? await fetchPlaylistListing(parsed.playlistId, maxVideos, apiKey)
         : await scrapePlaylistListing(parsed.playlistId, maxVideos).catch((e: any) => {
-            throw Object.assign(new Error(`Could not list the playlist without YOUTUBE_API_KEY (${e.message}). Set the key for reliable playlist ingestion.`), { status: 502 });
+            throw Object.assign(
+              new Error(`Could not list the playlist without YOUTUBE_API_KEY: ${e.message} Setting YOUTUBE_API_KEY lists playlists through the Data API instead.`),
+              { status: 502 }
+            );
           });
       const { videos, metadataNote } = await ingestVideos(listing.items);
       const withText = videos.filter((v) => v.transcriptSource === 'youtube-captions').length;
       if (withText === 0) {
-        return res.status(422).json({ error: 'None of the playlist videos have an available transcript' });
+        return res.status(422).json({
+          error: summarizeTranscriptFailures(videos) ?? 'None of the playlist videos have an available transcript',
+          refusal: videos.every((v) => v.transcriptRefusal === 'bot-check') ? 'bot-check' : null,
+        });
       }
       return res.json({
         success: true,
         source: 'youtube-captions',
         listingSource: listing.source,
         transcriptCoverage: { withTranscript: withText, total: videos.length },
+        transcriptProblems: summarizeTranscriptFailures(videos),
         metadataNote,
         playlist: {
           id: `playlist-${parsed.playlistId}`,
