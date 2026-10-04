@@ -184,6 +184,70 @@ export function chooseArm(outcomes: readonly SynthesisOutcome[], playlistKey: st
   return { passes: best.passes, why: writer ? `${writer}: ${why}` : why, stats };
 }
 
+// --- how sure: Hoeffding confidence over k compared rates ---------------------------
+//
+// The bandit above chooses; this says how much the record can be trusted. It is
+// the confidence half of the owner's "competing theorems" Theorem 2: telling the
+// best of m options apart to within eps with probability 1 - delta takes on the
+// order of (m / eps^2) log(1/delta) judged runs (the PAC best-arm bound, Even-Dar,
+// Mannor & Mansour 2002). Hoeffding's inequality with a union bound over the k
+// rates compared: with probability at least 1 - delta, every observed pass rate
+// is within eps = sqrt(ln(2k/delta) / (2n)) of the true one. Reported, never
+// used to decide: the choices stay with the bandit.
+
+export const CONFIDENCE_DELTA = 0.05;
+
+export function hoeffdingRadius(n: number, k: number, delta = CONFIDENCE_DELTA): number | null {
+  if (n <= 0) return null;
+  return r4(Math.sqrt(Math.log((2 * Math.max(1, k)) / delta) / (2 * n)));
+}
+
+// Judged runs each rate needs before its interval is +/- eps wide.
+export function runsNeeded(eps: number, k: number, delta = CONFIDENCE_DELTA): number {
+  return Math.ceil(Math.log((2 * Math.max(1, k)) / delta) / (2 * eps * eps));
+}
+
+export interface RateInterval {
+  key: string;
+  n: number;
+  wins: number;
+  rate: number | null; // observed pass rate; null with no judged runs
+  low: number | null;
+  high: number | null;
+  epsilon: number | null;
+}
+
+export function rateIntervals(rows: { key: string; n: number; wins: number }[], delta = CONFIDENCE_DELTA): RateInterval[] {
+  const k = rows.length;
+  return rows.map(({ key, n, wins }) => {
+    const eps = hoeffdingRadius(n, k, delta);
+    const rate = n ? wins / n : null;
+    return {
+      key,
+      n,
+      wins,
+      rate: rate === null ? null : r4(rate),
+      low: rate === null || eps === null ? null : r4(Math.max(0, rate - eps)),
+      high: rate === null || eps === null ? null : r4(Math.min(1, rate + eps)),
+      epsilon: eps,
+    };
+  });
+}
+
+// Is the best observed rate credibly above every other (intervals disjoint)?
+export function credibleLeader(rows: { key: string; n: number; wins: number }[], delta = CONFIDENCE_DELTA) {
+  const iv = rateIntervals(rows, delta).filter((x) => x.rate !== null);
+  if (iv.length < 2) return { leader: null as string | null, separated: false, intervals: rateIntervals(rows, delta), statement: 'fewer than two options with judged runs: nothing to compare yet' };
+  const best = iv.reduce((a, b) => (b.rate! > a.rate! ? b : a));
+  const separated = iv.every((x) => x === best || x.high! < best.low!);
+  const gap = best.rate! - Math.max(...iv.filter((x) => x !== best).map((x) => x.rate!));
+  const statement = separated
+    ? `${best.key} is credibly best at ${Math.round((1 - delta) * 100)}% confidence`
+    : `not yet distinguishable at ${Math.round((1 - delta) * 100)}% confidence` +
+      (gap > 0 ? `; separating a gap of ${Math.round(gap * 100)} points needs about ${runsNeeded(gap / 2, rows.length, delta)} judged runs each` : '');
+  return { leader: separated ? best.key : null, separated, intervals: rateIntervals(rows, delta), statement };
+}
+
 // --- which model writes ------------------------------------------------------------
 
 export interface WriterStat {
@@ -221,7 +285,8 @@ export function chooseWriter(outcomes: readonly SynthesisOutcome[], playlistKey:
       : `${best.writer}: ${best.wins}/${best.n} of its syntheses passed the guards in this playlist (${best.globalWins}/${best.globalN} everywhere); ` +
         `estimated pass rate ${Math.round(best.mean * 100)}%, exploration bonus ${best.bonus}. ` +
         `Others: ${stats.filter((x) => x !== best).map((x) => `${x.writer} ${x.wins}/${x.n}`).join(', ') || 'none'}.`;
-  return { writer: best.writer, why, stats };
+  const confidence = credibleLeader(stats.filter((x) => x.n > 0).map((x) => ({ key: x.writer, n: x.n, wins: x.wins })));
+  return { writer: best.writer, why: total ? `${why} Record: ${confidence.statement}.` : why, stats, confidence };
 }
 
 // --- lessons and examples ----------------------------------------------------------
@@ -444,6 +509,15 @@ export function lessonEffect(outcomes: readonly SynthesisOutcome[]) {
   };
 }
 
+// The same question for lessons: is the difference real yet?
+export function lessonEffectConfidence(outcomes: readonly SynthesisOutcome[]) {
+  const e = lessonEffect(outcomes);
+  return credibleLeader([
+    { key: 'with lessons', n: e.withLessons.n, wins: e.withLessons.passed },
+    { key: 'without lessons', n: e.withoutLessons.n, wins: e.withoutLessons.passed },
+  ]);
+}
+
 // --- per-model shells ----------------------------------------------------------------
 
 // Each model's record, as a writer and as a reviewer, from the ledger and the
@@ -453,6 +527,12 @@ export function modelShells(entries: readonly Entry[], store: LearningStore) {
   const outcomes = synthesisOutcomes(entries);
   const valid = store.all().filter((x) => checkItem(x, entries).ok);
   const writers = [...new Set(outcomes.map((o) => o.writer))];
+  const intervals = rateIntervals(
+    writers.map((w) => {
+      const j = outcomes.filter((o) => o.writer === w && o.reward !== null);
+      return { key: w, n: j.length, wins: j.filter((o) => o.reward === 1).length };
+    })
+  );
   const asWriter = writers.map((model) => {
     const mine = outcomes.filter((o) => o.writer === model);
     const judged = mine.filter((o) => o.reward !== null);
@@ -462,6 +542,7 @@ export function modelShells(entries: readonly Entry[], store: LearningStore) {
       syntheses: mine.length,
       judged: judged.length,
       passed: judged.filter((o) => o.reward === 1).length,
+      passRate: intervals.find((x) => x.key === model)!, // with its Hoeffding interval across all writers
       lessons: valid.filter((x) => x.kind === 'lesson' && x.writer === model).length,
       examples: valid.filter((x) => x.kind === 'example' && x.writer === model).length,
       playlists: playlists.map((k) => ({
@@ -482,7 +563,7 @@ export function modelShells(entries: readonly Entry[], store: LearningStore) {
       reviewedOwnWriting: mine.filter((e) => outcomes.some((o) => o.logicSha256 === e.data.logicSha256 && o.writer === model)).length,
     };
   });
-  return { asWriter, reviewers };
+  return { asWriter, reviewers, writersCompared: credibleLeader(intervals.map(({ key, n, wins }) => ({ key, n, wins }))).statement };
 }
 
 export function playlistKeyOf(playlist: any, activeVideo: any): string {

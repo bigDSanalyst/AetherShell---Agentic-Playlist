@@ -179,3 +179,28 @@ test('lesson effect separates a model\'s own lessons from other models\'', () =>
   assert.deepEqual(e.withOwnLessons, { n: 1, passed: 1 });
   assert.deepEqual(e.withOnlyOtherModelsLessons, { n: 1, passed: 0 });
 });
+
+test('confidence (competing-theorems Theorem 2): Hoeffding radius, runs needed, credible leader', async () => {
+  const { hoeffdingRadius, runsNeeded, rateIntervals, credibleLeader } = await import('../server/learning');
+  // eps = sqrt(ln(2k/delta) / 2n): one rate, 100 runs, 95% -> ~0.136
+  assert.equal(hoeffdingRadius(100, 1), 0.1358);
+  assert.equal(hoeffdingRadius(0, 1), null); // no runs, no claim
+  // Comparing more options at once widens every interval (union bound).
+  assert.ok(hoeffdingRadius(100, 4)! > hoeffdingRadius(100, 1)!);
+  // Runs needed for +/-0.1 across 2 options at 95%: ceil(ln(80) / 0.02) = 220
+  assert.equal(runsNeeded(0.1, 2), 220);
+  assert.ok(runsNeeded(0.05, 2) > runsNeeded(0.1, 2) * 3); // halving eps quadruples the runs
+  const iv = rateIntervals([{ key: 'a', n: 10, wins: 8 }, { key: 'b', n: 0, wins: 0 }]);
+  assert.deepEqual(iv[1], { key: 'b', n: 0, wins: 0, rate: null, low: null, high: null, epsilon: null });
+  assert.ok(iv[0].low! >= 0 && iv[0].high! <= 1 && iv[0].low! < 0.8 && iv[0].high! > 0.8);
+
+  // 6/6 vs 1/6 looks decisive but is not, at 95%, with 6 runs each.
+  const small = credibleLeader([{ key: 'gemini', n: 6, wins: 6 }, { key: 'qwen', n: 6, wins: 1 }]);
+  assert.equal(small.separated, false);
+  assert.match(small.statement, /not yet distinguishable at 95% confidence; separating a gap of 83 points needs about \d+ judged runs each/);
+  // With enough runs it is.
+  const big = credibleLeader([{ key: 'gemini', n: 200, wins: 190 }, { key: 'qwen', n: 200, wins: 40 }]);
+  assert.equal(big.leader, 'gemini');
+  assert.match(big.statement, /gemini is credibly best at 95% confidence/);
+  assert.match(credibleLeader([{ key: 'x', n: 3, wins: 3 }]).statement, /nothing to compare/);
+});

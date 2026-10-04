@@ -46,7 +46,7 @@ import {
 import { RunLedger, type LedgerEntry } from './server/runLedger';
 import { GeminiUsage, classifyGeminiError, formatDuration, secondsUntilReset } from './server/geminiUsage';
 import { configuredProviders, modelCascade, modelStatus, openAICompatibleGenerate, parseModelRef, toChatMessages } from './server/models';
-import { LearningStore, chooseArm, chooseWriter, learningPromptBlock, lessonEffect, modelShells, playlistKeyOf, synthesisOutcomes, armStats } from './server/learning';
+import { LearningStore, chooseArm, chooseWriter, learningPromptBlock, lessonEffect, lessonEffectConfidence, modelShells, playlistKeyOf, synthesisOutcomes, armStats } from './server/learning';
 import { ledgerDrift } from './server/eprocess';
 import { diagnose } from './server/doctor';
 import { envFloat, envInt, rateLimit, requireAccessToken } from './server/http';
@@ -219,7 +219,7 @@ function learningReport(playlistKey?: string) {
     judged: outcomes.filter((o) => o.reward !== null).length,
     passed: outcomes.filter((o) => o.reward === 1).length,
     ...learningStore.report(entries),
-    lessonEffect: lessonEffect(outcomes),
+    lessonEffect: { ...lessonEffect(outcomes), confidence: lessonEffectConfidence(outcomes).statement },
     playlists: keys.map((k) => ({
       playlistKey: k,
       syntheses: outcomes.filter((o) => o.playlistKey === k).length,
