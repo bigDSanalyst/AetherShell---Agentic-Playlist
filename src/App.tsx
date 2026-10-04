@@ -256,7 +256,7 @@ export default function App() {
   };
 
   // Handler: Run RCL and SSI synthesis in Innershell Body
-  const handleRunRclSsi = async (iterations: number | 'auto', directives: string) => {
+  const handleRunRclSsi = async (iterations: number | 'auto', directives: string, writer?: string) => {
     if (!activeVideo?.rawTranscript) {
       showToast('Please select a video with transcript dialogue first', 'error');
       return;
@@ -270,6 +270,7 @@ export default function App() {
         sessionMemory: sessionMemory.memoryLattice,
         rclIterations: iterations,
         userDirectives: directives,
+        writer,
       });
 
       setRclAnalysis({ ...res.rclResult, learning: res.learning });
@@ -290,7 +291,7 @@ export default function App() {
       }));
 
       showToast(
-        `RCL/SSI cycle complete (${res.learning.passes} pass(es)${res.learning.chosenBy === 'learned' ? ', chosen by AetherTwin' : ''}). Logic ready for binding.`,
+        `RCL/SSI cycle complete: ${res.learning.passes} pass(es) by ${res.learning.writer}${res.learning.chosenBy === 'learned' || res.learning.writerChosenBy === 'learned' ? ' (AetherTwin chose)' : ''}. Logic ready for binding.`,
         'success'
       );
     } catch (err: any) {

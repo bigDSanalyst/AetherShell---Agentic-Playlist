@@ -617,6 +617,40 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
                 <div className="text-emerald-300/90 font-sans">Next "auto" choice: {p.next.why}</div>
               </div>
             ))}
+            {/* Each model's own shell: its record as writer and as reviewer */}
+            {shadowState.learning.shells?.asWriter?.length > 0 && (
+              <div className="space-y-1">
+                <div className="text-slate-300 uppercase tracking-wider text-[10px]">Model shells (each model's own record)</div>
+                {shadowState.learning.shells.asWriter.map((m: any) => {
+                  const r = shadowState.learning.shells.reviewers.find((x: any) => x.model === m.model);
+                  return (
+                    <div key={m.model} className="p-2 rounded-lg bg-slate-950/70 border border-cyan-900/50 space-y-0.5">
+                      <div className="text-cyan-300">{m.model}</div>
+                      <div className="text-slate-400 font-sans">
+                        Wrote {m.syntheses}; {m.passed}/{m.judged} judged passed every guard. Own lessons {m.lessons}, own examples {m.examples}.
+                        {r ? ` As reviewer: ${r.verdicts} verdict(s), approved ${r.approved}${r.reviewedOwnWriting ? `, ${r.reviewedOwnWriting} on its own writing` : ''}.` : ''}
+                      </div>
+                      {m.playlists.map((p: any) => (
+                        <div key={p.playlistKey} className="text-emerald-300/90 font-sans text-[11px]">
+                          {p.playlistKey}: next "auto" passes: {p.next.passes}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+                {shadowState.learning.shells.reviewers
+                  .filter((r: any) => !shadowState.learning.shells.asWriter.some((m: any) => m.model === r.model))
+                  .map((r: any) => (
+                    <div key={r.model} className="p-2 rounded-lg bg-slate-950/70 border border-indigo-900/50 text-slate-400 font-sans">
+                      <span className="text-indigo-300 font-mono">{r.model}</span> (reviewer only): {r.verdicts} verdict(s), approved {r.approved}.
+                    </div>
+                  ))}
+                <p className="text-slate-500 font-sans text-[11px]">
+                  With own lessons: {shadowState.learning.lessonEffect.withOwnLessons?.passed ?? 0}/{shadowState.learning.lessonEffect.withOwnLessons?.n ?? 0} passed.
+                  With only other models' lessons: {shadowState.learning.lessonEffect.withOnlyOtherModelsLessons?.passed ?? 0}/{shadowState.learning.lessonEffect.withOnlyOtherModelsLessons?.n ?? 0}.
+                </p>
+              </div>
+            )}
             {shadowState.learning.tampered.length > 0 && (
               <p className="text-red-300 font-sans">
                 {shadowState.learning.tampered.length} stored item(s) do not match the ledger and are ignored.

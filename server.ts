@@ -46,7 +46,7 @@ import {
 import { RunLedger, type LedgerEntry } from './server/runLedger';
 import { GeminiUsage, classifyGeminiError, formatDuration, secondsUntilReset } from './server/geminiUsage';
 import { configuredProviders, modelCascade, modelStatus, openAICompatibleGenerate, parseModelRef, toChatMessages } from './server/models';
-import { LearningStore, chooseArm, learningPromptBlock, lessonEffect, playlistKeyOf, synthesisOutcomes, armStats } from './server/learning';
+import { LearningStore, chooseArm, chooseWriter, learningPromptBlock, lessonEffect, modelShells, playlistKeyOf, synthesisOutcomes, armStats } from './server/learning';
 import { ledgerDrift } from './server/eprocess';
 import { diagnose } from './server/doctor';
 import { envFloat, envInt, rateLimit, requireAccessToken } from './server/http';
@@ -226,9 +226,18 @@ function learningReport(playlistKey?: string) {
       arms: armStats(outcomes, k).filter((a) => a.n > 0),
       next: chooseArm(outcomes, k),
     })),
-    forPlaylist: playlistKey ? { playlistKey, next: chooseArm(outcomes, playlistKey) } : null,
+    forPlaylist: playlistKey
+      ? { playlistKey, next: chooseArm(outcomes, playlistKey), writer: chooseWriter(outcomes, playlistKey, callableWriters()) }
+      : null,
+    // Each model's own record (as writer and as reviewer); the fields above are the shared twin.
+    shells: modelShells(entries, learningStore),
     recent: outcomes.slice(-10).reverse(),
   };
+}
+
+// Models that can write right now: configured provider, daily quota not reported used up.
+function callableWriters(): string[] {
+  return MODEL_CASCADE.filter((ref) => PROVIDER_CONFIG[parseModelRef(ref).provider] && !geminiUsage.dailyQuotaReached(ref));
 }
 
 // Guard runs as the ledger recorded them.
@@ -900,7 +909,7 @@ async function startServer() {
   // against the transcript. Every number reported is measured, not generated.
   app.post('/api/engine/rcl-ssi-cycle', async (req: Request, res: Response) => {
     try {
-      const { playlist, activeVideo, sessionMemory, rclIterations = 3, userDirectives = '' } = req.body || {};
+      const { playlist, activeVideo, sessionMemory, rclIterations = 3, userDirectives = '', writer: writerRequest } = req.body || {};
       const transcript: string = activeVideo?.rawTranscript || '';
       if (!transcript.trim()) {
         return res.status(400).json({ error: 'activeVideo.rawTranscript is required' });
@@ -911,9 +920,16 @@ async function startServer() {
       const playlistKey = playlistKeyOf(playlist, activeVideo);
       const transcriptSha256 = hashTranscript(transcript);
       const outcomesSoFar = synthesisOutcomes(runLedger.all());
-      const learned = rclIterations === 'auto' ? chooseArm(outcomesSoFar, playlistKey) : null;
+      // Which model writes: AetherTwin's choice ("auto"), the one asked for, or the first callable.
+      const candidates = callableWriters();
+      const writerPick = writerRequest === 'auto' ? chooseWriter(outcomesSoFar, playlistKey, candidates) : null;
+      const writer = writerPick?.writer ?? (candidates.includes(writerRequest) ? writerRequest : candidates[0] ?? MODEL_CASCADE[0]);
+      const writerChosenBy = writerPick ? 'learned' : candidates.includes(writerRequest) ? 'owner' : 'default';
+      const writeModels = [writer, ...MODEL_CASCADE.filter((m) => m !== writer)];
+      // Passes: learned from this writer's own record (over the other models'), or as chosen.
+      const learned = rclIterations === 'auto' ? chooseArm(outcomesSoFar, playlistKey, writer) : null;
       const iterations = learned ? learned.passes : Math.max(1, Math.min(5, Math.round(Number(rclIterations) || 1)));
-      const { lessons, example } = learningStore.select(runLedger.all(), playlistKey, transcriptSha256);
+      const { lessons, example } = learningStore.select(runLedger.all(), playlistKey, transcriptSha256, writer);
       const learnedBlock = learningPromptBlock(lessons, example);
 
       const rounds: { cycle: number; focus: string; changeFromPrevious: number; groundingRatio: number; modelUsed: string }[] = [];
@@ -946,7 +962,7 @@ Revise the previous pass. Remove or rewrite any claim, step or invariant not sup
 Return JSON matching:
 ${RCL_SCHEMA}`;
 
-        const { data, modelUsed } = await callModelJson({ contents: prompt, taskName: `rcl-pass-${pass}` });
+        const { data, modelUsed } = await callModelJson({ contents: prompt, taskName: `rcl-pass-${pass}`, models: writeModels });
         current = data;
         const logicNow = sanitizeLogic(data, pass);
         const claims = logicClaimText(logicNow);
@@ -978,7 +994,12 @@ ${RCL_SCHEMA}`;
         logicSha256: hashLogic(innershellLogic),
         passes: iterations,
         chosenBy: learned ? 'learned' : 'owner',
+        // The model whose output became the logic; intendedWriter differs only after a fallback.
+        writer: last.modelUsed,
+        intendedWriter: writer,
+        writerChosenBy,
         lessonsUsed: lessons.map((l) => l.id),
+        lessonWriters: lessons.map((l) => l.writer ?? 'unknown'),
         examplesUsed: example ? [example.id] : [],
         groundingRatio: last.groundingRatio,
         modelsUsed: [...new Set(rounds.map((r) => r.modelUsed))],
@@ -1015,8 +1036,17 @@ ${RCL_SCHEMA}`;
           passes: iterations,
           chosenBy: learned ? 'learned' : 'owner',
           why: learned ? learned.why : `You chose ${iterations} pass(es).`,
-          lessonsUsed: lessons.map((l) => ({ id: l.id, failedChecks: l.failedChecks })),
+          writer: last.modelUsed,
+          intendedWriter: writer,
+          writerChosenBy,
+          writerWhy: writerPick
+            ? writerPick.why
+            : writerChosenBy === 'owner'
+            ? `You chose ${writer}.`
+            : `${writer}: the first callable model in AETHERSHELL_MODELS.`,
+          lessonsUsed: lessons.map((l) => ({ id: l.id, failedChecks: l.failedChecks, writer: l.writer ?? null, reviewer: l.reviewer ?? null })),
           exampleUsed: example ? example.id : null,
+          exampleWriter: example?.writer ?? null,
           ledgerSeq: synthEntry.seq,
         },
         cycleTimestamp: Date.now(),

@@ -38,7 +38,7 @@ interface InnerShellBodyProps {
   activeVideo: VideoNode | null;
   sessionMemory: PersistentSessionMemory;
   onUpdateSessionMemory: (newMemory: Record<string, any>) => void;
-  onRunRclSsi: (iterations: number | 'auto', directives: string) => void;
+  onRunRclSsi: (iterations: number | 'auto', directives: string, writer?: string) => void;
   isLoading: boolean;
   onProceedToCrypto: () => void;
   lastExecutionResult: ScriptExecutionResult | null;
@@ -60,6 +60,8 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
   const [rclIterations, setRclIterations] = useState(3);
   // Let AetherTwin choose the pass count from the guards' past verdicts.
   const [autoPasses, setAutoPasses] = useState(false);
+  // Let AetherTwin choose which model writes, from each model's own record.
+  const [autoWriter, setAutoWriter] = useState(false);
   const [userDirectives, setUserDirectives] = useState('');
   const [isExecutingScript, setIsExecutingScript] = useState(false);
   const [customScriptCode, setCustomScriptCode] = useState<string>('');
@@ -193,6 +195,10 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
               <input type="checkbox" checked={autoPasses} onChange={(e) => setAutoPasses(e.target.checked)} className="accent-emerald-400" />
               Let AetherTwin choose (learned from guard verdicts)
             </label>
+            <label className="flex items-center gap-1.5 text-[10px] font-mono text-slate-400 cursor-pointer">
+              <input type="checkbox" checked={autoWriter} onChange={(e) => setAutoWriter(e.target.checked)} className="accent-emerald-400" />
+              Let AetherTwin choose the writer model
+            </label>
           </div>
 
           <div className="md:col-span-6 space-y-1">
@@ -210,7 +216,7 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
 
           <div className="md:col-span-3">
             <button
-              onClick={() => onRunRclSsi(autoPasses ? 'auto' : rclIterations, userDirectives)}
+              onClick={() => onRunRclSsi(autoPasses ? 'auto' : rclIterations, userDirectives, autoWriter ? 'auto' : undefined)}
               disabled={isLoading || !activeVideo?.rawTranscript}
               className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-slate-950 font-bold text-xs font-mono transition-all shadow-md shadow-cyan-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
             >
@@ -378,13 +384,34 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
                     <span className="text-emerald-300">
                       Learning: {rclAnalysis.learning.passes} pass(es), {rclAnalysis.learning.chosenBy === 'learned' ? 'chosen by AetherTwin' : 'chosen by you'}
                     </span>
-                    <p className="text-slate-400 font-sans text-xs">{rclAnalysis.learning.why}</p>
                     <p className="text-slate-400 font-sans text-xs">
-                      {rclAnalysis.learning.lessonsUsed.length
-                        ? `Shown ${rclAnalysis.learning.lessonsUsed.length} lesson(s) from rejected syntheses: ${rclAnalysis.learning.lessonsUsed.map((l) => `${l.id} (${l.failedChecks.join('; ') || 'rejected'})`).join(', ')}.`
-                        : 'No lessons yet for this material.'}{' '}
-                      {rclAnalysis.learning.exampleUsed ? `Shown passed example ${rclAnalysis.learning.exampleUsed} as a grounding standard.` : 'No passed example from this playlist yet.'}
+                      Written by <span className="text-cyan-300">{rclAnalysis.learning.writer ?? 'unknown'}</span>
+                      {rclAnalysis.learning.intendedWriter && rclAnalysis.learning.writer !== rclAnalysis.learning.intendedWriter
+                        ? ` (fell back from ${rclAnalysis.learning.intendedWriter})`
+                        : ''}
+                      . {rclAnalysis.learning.writerWhy}
                     </p>
+                    <p className="text-slate-400 font-sans text-xs">{rclAnalysis.learning.why}</p>
+                    <div className="text-slate-400 font-sans text-xs space-y-0.5">
+                      {rclAnalysis.learning.lessonsUsed.length ? (
+                        rclAnalysis.learning.lessonsUsed.map((l) => (
+                          <div key={l.id}>
+                            {l.id}{' '}
+                            <span className={l.writer && l.writer === rclAnalysis.learning!.writer ? 'text-amber-300' : 'text-indigo-300'}>
+                              [{l.writer && l.writer === rclAnalysis.learning!.writer ? 'own' : 'shared'}: written by {l.writer ?? 'unrecorded'}, reviewed by {l.reviewer ?? 'unrecorded'}]
+                            </span>{' '}
+                            {l.failedChecks.join('; ') || 'rejected'}
+                          </div>
+                        ))
+                      ) : (
+                        <div>No lessons yet for this material.</div>
+                      )}
+                      <div>
+                        {rclAnalysis.learning.exampleUsed
+                          ? `Shown passed example ${rclAnalysis.learning.exampleUsed} (written by ${rclAnalysis.learning.exampleWriter ?? 'unrecorded'}) as a grounding standard.`
+                          : 'No passed example from this playlist yet.'}
+                      </div>
+                    </div>
                     <p className="text-slate-500 text-[10px]">Recorded as ledger entry #{rclAnalysis.learning.ledgerSeq}. Run the guards to teach it.</p>
                   </div>
                 )}

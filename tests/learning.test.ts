@@ -89,7 +89,13 @@ test('the pass-count choice is deterministic, starts cheap and follows the evide
     synth(l, y, { passes: 3 });
     guard(l, y, true);
   }
-  const o = synthesisOutcomes(l.all() as any);
+  let o = synthesisOutcomes(l.all() as any);
+  // The untried, cheaper 2 passes gets one try before 3 is settled on.
+  assert.equal(chooseArm(o, 'playlist:P').passes, 2);
+  const two = logic();
+  synth(l, two, { passes: 2 });
+  guard(l, two, false);
+  o = synthesisOutcomes(l.all() as any);
   const pick = chooseArm(o, 'playlist:P');
   assert.equal(pick.passes, 3);
   assert.match(pick.why, /3 pass\(es\): 6\/6 passed/);
@@ -97,6 +103,8 @@ test('the pass-count choice is deterministic, starts cheap and follows the evide
   const s = armStats(o, 'playlist:P');
   assert.equal(s.length, ARMS.length);
   assert.ok(s.find((a) => a.passes === 1)!.mean < s.find((a) => a.passes === 3)!.mean);
+  // Never more than 100% optimistic: no dearer arm scores above a perfect cheaper one.
+  assert.ok(s.every((a) => a.score <= 1));
 
   // A new playlist borrows the pooled record as a prior.
   assert.equal(chooseArm(o, 'playlist:NEW').passes, 3);
@@ -185,7 +193,12 @@ test('lesson effect and playlist keys', () => {
   guard(l, a, true);
   synth(l, b);
   guard(l, b, false);
-  assert.deepEqual(lessonEffect(synthesisOutcomes(l.all() as any)), { withLessons: { n: 1, passed: 1 }, withoutLessons: { n: 1, passed: 0 } });
+  assert.deepEqual(lessonEffect(synthesisOutcomes(l.all() as any)), {
+    withLessons: { n: 1, passed: 1 },
+    withoutLessons: { n: 1, passed: 0 },
+    withOwnLessons: { n: 0, passed: 0 }, // these entries record no lesson writers
+    withOnlyOtherModelsLessons: { n: 1, passed: 1 },
+  });
   assert.equal(playlistKeyOf({ id: 'PL1' }, {}), 'playlist:PL1');
   assert.equal(playlistKeyOf({ id: 'demo-1', isDemo: true }, {}), 'demo:demo-1');
   assert.equal(playlistKeyOf(undefined, { youtubeId: 'abc' }), 'video:abc');
