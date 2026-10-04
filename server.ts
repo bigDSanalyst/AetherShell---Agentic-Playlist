@@ -53,6 +53,7 @@ import { ledgerDrift } from './server/eprocess';
 import { diagnose } from './server/doctor';
 import { TranscriptArchive, retryDelaySeconds } from './server/transcriptArchive';
 import { buildCorpus, collectionId } from './server/corpus';
+import { checkChatAnswer } from './server/claimCheck';
 import { LatencyStats, transcriptBlock } from './server/latency';
 import { envFloat, envInt, rateLimit, requireAccessToken } from './server/http';
 
@@ -1436,12 +1437,12 @@ ${corpus}
       }
       try {
         if (streaming) {
-          const { modelUsed } = await callModelStream({ contents, config: { systemInstruction }, preferredModel, taskName: 'chat' }, (delta) => send({ delta }));
-          send({ done: true, modelUsed, corpusCoverage, timestamp: Date.now() });
+          const { text, modelUsed } = await callModelStream({ contents, config: { systemInstruction }, preferredModel, taskName: 'chat' }, (delta) => send({ delta }));
+          send({ done: true, modelUsed, corpusCoverage, claimCheck: checkChatAnswer(text, videos), timestamp: Date.now() });
           return res.end();
         }
         const { text, modelUsed } = await callModel({ contents, config: { systemInstruction }, preferredModel, taskName: 'chat' });
-        return res.json({ success: true, reply: text, modelUsed, corpusCoverage, timestamp: Date.now() });
+        return res.json({ success: true, reply: text, modelUsed, corpusCoverage, claimCheck: checkChatAnswer(text, videos), timestamp: Date.now() });
       } catch (err: any) {
         if (streaming && err?.partial) {
           send({ error: err.message, partial: true });

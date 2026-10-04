@@ -452,6 +452,22 @@ export interface ChatMessage {
   content: string;
   timestamp: number;
   audioTranscriptUsed?: boolean;
+  claimCheck?: ClaimCheck;
+}
+
+// The server's word check of a chat answer against the transcripts (server/claimCheck.ts).
+export interface ClaimCheck {
+  citations: {
+    video: number;
+    cited: string;
+    status: 'supported' | 'elsewhere' | 'unsupported' | 'no-such-video' | 'bad-time';
+    foundAt?: string;
+    overlap: number;
+    claim: string;
+  }[];
+  uncited: { text: string; inCorpus: number; outsideCorpus: boolean }[];
+  summary: { supported: number; elsewhere: number; unsupported: number; invalid: number; uncited: number; outsideCorpus: number };
+  method: string;
 }
 
 export interface CustomGitHubGuard {
