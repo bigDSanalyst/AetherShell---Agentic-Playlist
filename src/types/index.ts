@@ -112,8 +112,13 @@ export interface SynthesisLearning {
   passes: number;
   chosenBy: 'learned' | 'owner';
   why: string;
-  lessonsUsed: { id: string; failedChecks: string[] }[];
+  writer: string; // the model whose output became the logic
+  intendedWriter: string; // differs from writer only after a fallback
+  writerChosenBy: 'learned' | 'owner' | 'default';
+  writerWhy: string;
+  lessonsUsed: { id: string; failedChecks: string[]; writer: string | null; reviewer: string | null }[];
   exampleUsed: string | null;
+  exampleWriter: string | null;
   ledgerSeq: number;
 }
 
@@ -172,6 +177,7 @@ export interface InvariantAuditItem {
 }
 
 export interface GuardAuditReport {
+  reviewModel?: string | null; // the model that made the semantic judgement; null if none could
   guardShellTimestamp: number;
   watermarkSignatureStatus: 'VERIFIED' | 'MISMATCH' | 'MISSING';
   decompressionStatus: boolean;

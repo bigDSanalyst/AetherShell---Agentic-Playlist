@@ -31,6 +31,7 @@ and check the logic against the transcript before it is accepted
 | Gemini usage | The Ingestion tab shows today's calls per model (quota day = Pacific, as Google's). Google does not report remaining quota, so a bar appears only when you state your limit (`GEMINI_DAILY_REQUEST_LIMIT`, from AI Studio → Rate Limit). When Google refuses a model with a **daily** quota error, the server stops calling that model until midnight Pacific and says so; `doctor` reports it. Counts are kept next to the ledger. `GET /api/gemini/usage`. |
 | Snapshots | Memory → "Download Snapshot" saves the working state (memory, playlist, transcripts, signed watermarks, logic) as JSON; "Restore Snapshot" loads it after a confirmation. Guard verdicts are never restored from a file: the ledger is their record, so run the guards again. Old memory-only exports still import. The header shows when memory was last saved in this browser. |
 | Learning (AetherTwin) | Each synthesis is recorded in the ledger (playlist, transcript and logic hashes, pass count, what it was shown). Guard verdicts on it then teach the next one: a rejection becomes a **lesson** (which checks failed, what the reviewer called unsupported), a pass by every guard becomes an **example**; the next synthesis of the same playlist is shown both, marked as data. With "Let AetherTwin choose" ticked, the pass count (1–5) is picked per playlist by a deterministic bandit (UCB1 over a pooled Beta prior) from the ledger alone. It learns only from logic this server synthesized; model outages and channel failures are not lessons; the owner's overrides win; every stored item is re-checked against the ledger when used, and `doctor` reports any that do not match. It never reads or changes the charter. Store: `data/learning.jsonl` (`AETHERSHELL_LEARNING_PATH`), a cache: deleting it loses lessons and examples, not evidence. `GET /api/learning`. |
+| Model shells | With several models, each has its own shell: its record as a writer (pass rate, own lessons, own best pass count per playlist) and as a reviewer. The shared twin holds what the guards verified, for every model. Every lesson and example names its **writer** and **reviewer**, checked against the ledger, so a writer is shown "own" and "shared" lessons with their source, and a false source is caught. Pass counts are learned per writer, borrowing from the other models while a writer is new. With "Let AetherTwin choose the writer model", the writer is picked by the same rule from each model's record. Optimism is capped at a 100% pass rate, so a dearer setting is never explored while a cheaper one is already perfect. Every pass rate is reported with a 95% Hoeffding interval (union-bounded over the options compared), and the writer choice and lesson effect say whether a difference is credible yet or how many judged runs would settle it: the confidence side of Theorem 2 in [competing-theorems](https://github.com/bigDSanalyst/competing-theorems) (the PAC best-arm bound, O((m/ε²) log(1/δ))). Reported only; the choices stay with the bandit. |
 
 ## How it fits together
 
@@ -54,6 +55,40 @@ flowchart LR
 ```
 
 Only the owner's key changes the charter. Everything else reads the ledger; nothing rewrites it.
+
+## Models: Gemini, hosted, or open-source on your own GPU
+
+Every model is named `provider:model` and set with `AETHERSHELL_MODELS`, tried in order:
+
+| Provider | Set | Example model name |
+| --- | --- | --- |
+| Gemini | `GEMINI_API_KEY` | `gemini-flash-latest` (no prefix needed) |
+| Local, open source (Ollama, llama.cpp, vLLM, LM Studio) | `LOCAL_LLM_BASE_URL`, e.g. `http://127.0.0.1:11434/v1` | `local:qwen3:8b`, `local:gemma3:12b` |
+| OpenRouter (hosted open models) | `OPENROUTER_API_KEY` | `openrouter:qwen/qwen3-8b:free` |
+| OpenAI or compatible | `OPENAI_API_KEY` (+ `OPENAI_BASE_URL`) | `openai:gpt-4.1-mini` |
+
+Models of a provider that is not set up are skipped; `doctor` lists what can be
+called. **The guard reviewers are the owner's choice**: they are the signed
+charter's `reviewModels`, not this setting. With a local model and a charter that
+still names Gemini reviewers, synthesis runs but the guards fail closed and
+`doctor` says `BLOCK guard-review` until the owner signs a charter naming models
+the server can call (`npm run owner -- propose / sign --set reviewModels=local:gemma3:12b`).
+Prefer a different model family for review than for synthesis, so the reviewer
+does not share the writer's blind spots. Voice input still uses Gemini's audio model.
+
+Things that affect accuracy:
+
+- **Context window (Ollama).** Ollama's default context is small (2-4K tokens) and
+  it drops the start of a longer prompt without an error. A synthesis prompt
+  carries up to 15,000 characters of transcript (~4K tokens) plus instructions,
+  so start the server with a larger window: `OLLAMA_CONTEXT_LENGTH=16384 ollama serve`.
+- **Every model is checked against the source, not against each other.** Each RCL
+  pass sees the original transcript; the guards measure the final logic against
+  the full transcript, whichever model (or mix of models, after a fallback) wrote
+  it. The ledger records which model wrote each pass (`modelsUsed`) and which
+  model reviewed each verdict (`reviewModel`).
+- **A model that answers with invalid JSON is skipped** and the next model is
+  tried; if none gives usable JSON the call fails closed.
 
 ## Proving when: Bitcoin-anchored timestamps
 

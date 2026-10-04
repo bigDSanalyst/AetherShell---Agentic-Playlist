@@ -34,6 +34,8 @@ import {
   synthesizePlaylistKnowledge,
   sendSubjugatedChatMessage,
   transcribeMicrophoneAudio,
+  fetchModels,
+  type ModelInfo,
 } from '../services/api';
 
 interface EpistemicKnowledgeEngineProps {
@@ -56,7 +58,18 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
   const [focusQuery, setFocusQuery] = useState('');
   const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [knowledge, setKnowledge] = useState<SynthesizedKnowledge | null>(null);
-  const [selectedModel, setSelectedModel] = useState<string>('gemini-flash-latest');
+  // Models come from the server: whatever providers it is set up for (Gemini, local, OpenRouter, ...).
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [modelsError, setModelsError] = useState<string | null>(null);
+  const [selectedModel, setSelectedModel] = useState<string>('');
+  useEffect(() => {
+    fetchModels()
+      .then((r) => {
+        setModels(r.models);
+        setSelectedModel((cur) => cur || r.models.find((m) => m.available)?.ref || '');
+      })
+      .catch((e) => setModelsError(e.message));
+  }, []);
 
   // Subjugated Chat State
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -168,7 +181,7 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
     }
   };
 
-  // Microphone Audio Recording & Gemini Transcribe
+  // Microphone audio recording; transcription uses Gemini's audio input
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -289,28 +302,25 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
           </div>
 
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 font-mono text-xs">
-            {/* Model Selector with Modern Gemini Models */}
+            {/* Model selector: the models this server is set up to call (GET /api/models) */}
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-indigo-700/60 text-xs font-mono">
               <Sparkles className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-              <span className="text-slate-400 hidden xl:inline">Engine:</span>
-              <select
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="bg-transparent text-cyan-300 font-bold focus:outline-none cursor-pointer pr-1"
-              >
-                <option value="gemini-flash-latest" className="bg-slate-900 text-cyan-300">
-                  Gemini Flash Latest (1M Context • Primary) ⚡
-                </option>
-                <option value="gemini-3.1-pro-preview" className="bg-slate-900 text-slate-200">
-                  Gemini 3.1 Pro (2M Token Pool • Deep Reasoning) 👑
-                </option>
-                <option value="gemini-3.1-flash-lite" className="bg-slate-900 text-slate-200">
-                  Gemini 3.1 Flash Lite (High Throughput)
-                </option>
-                <option value="gemini-3.8-flash" className="bg-slate-900 text-slate-200">
-                  Gemini 3.8 Flash
-                </option>
-              </select>
+              <span className="text-slate-400 hidden xl:inline">Model:</span>
+              {models.length ? (
+                <select
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="bg-transparent text-cyan-300 font-bold focus:outline-none cursor-pointer pr-1 max-w-[16rem]"
+                >
+                  {models.map((m) => (
+                    <option key={m.ref} value={m.ref} disabled={!m.available} className="bg-slate-900 text-slate-200">
+                      {m.model} ({m.provider}){m.available ? '' : ' - not set up'}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="text-slate-500">{modelsError ? `unavailable: ${modelsError}` : 'loading…'}</span>
+              )}
             </div>
 
             <div className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700/80 text-slate-300">
@@ -319,16 +329,11 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
               <span className="text-slate-500"> ({totalWords.toLocaleString()} words)</span>
             </div>
 
-            {/* Token Pool Headroom Gauge with 2M support */}
-            <div className="px-3 py-1.5 rounded-lg bg-indigo-950/80 border border-indigo-700/60 text-indigo-300 flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span>Token Pool: </span>
-              <strong className="text-emerald-400">
-                {Math.round(totalWords * 1.35).toLocaleString()} / {selectedModel === 'gemini-3.1-pro-preview' ? '2,097,152' : '1,048,576'}
-              </strong>
-              <span className="text-[10px] text-indigo-300 bg-indigo-900/60 px-1.5 py-0.5 rounded font-bold">
-                {((Math.round(totalWords * 1.35) / (selectedModel === 'gemini-3.1-pro-preview' ? 2097152 : 1048576)) * 100).toFixed(2)}% Used
-              </span>
+            {/* Corpus size: an estimate, and what the server actually sends */}
+            <div className="px-3 py-1.5 rounded-lg bg-indigo-950/80 border border-indigo-700/60 text-indigo-300" title="Tokens estimated at 1.35 per word. The server sends at most 45,000 characters of transcript per request.">
+              <span>Corpus ≈ </span>
+              <strong className="text-emerald-400">{Math.round(totalWords * 1.35).toLocaleString()} tokens</strong>
+              <span className="text-slate-500"> (sent: up to 45,000 characters)</span>
             </div>
           </div>
         </div>

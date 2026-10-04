@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-// What this server knows about its own Gemini usage, per model, for the
+// What this server knows about its own model usage (any provider), per model, for the
 // current quota day (Google resets free-tier daily quotas at midnight Pacific).
 //
 // What it can know: how many calls it made, which Google answered, and which
@@ -63,7 +63,7 @@ export function classifyGeminiError(err: unknown): Exclude<CallOutcome, 'ok'> {
   const e = err as any;
   const text = `${e?.status ?? ''} ${e?.code ?? ''} ${e?.message ?? String(err)}`;
   if (!/\b429\b|RESOURCE_EXHAUSTED|quota/i.test(text)) return 'failed';
-  return /per ?day|PerDay|daily/i.test(text) ? 'daily-quota' : 'rate-limit';
+  return /per[ -]?day|PerDay|daily/i.test(text) ? 'daily-quota' : 'rate-limit';
 }
 
 const blank = (): ModelUsage => ({
@@ -137,11 +137,14 @@ export class GeminiUsage {
     this.save();
   }
 
-  report(models: string[], dailyLimit: number | null) {
+  // dailyLimit: one stated limit for every model, or a per-model lookup (null = unknown).
+  report(models: string[], dailyLimitArg: number | null | ((model: string) => number | null)) {
     this.rollover();
     const now = this.now();
+    const limitOf = typeof dailyLimitArg === 'function' ? dailyLimitArg : () => dailyLimitArg;
     const rows = models.map((m) => {
       const u = this.state.models[m] ?? blank();
+      const dailyLimit = limitOf(m);
       return {
         model: m,
         ...u,
@@ -150,6 +153,7 @@ export class GeminiUsage {
         usedFraction: u.dailyQuotaReached ? 1 : dailyLimit ? Math.min(1, u.answered / dailyLimit) : null,
       };
     });
+    const dailyLimit = rows.find((r) => r.dailyLimit !== null)?.dailyLimit ?? null;
     return {
       day: this.state.day,
       timeZone: TZ,

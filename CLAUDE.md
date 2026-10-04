@@ -56,13 +56,14 @@ Run lint and tests before every commit.
 | Guard charter (owner-signed settings) | `server/charter.ts`, `scripts/owner.ts` |
 | Owner ⇄ system exchange (concerns, answers, overrides) | `server/exchange.ts`, `src/components/ExchangePanel.tsx` |
 | Run ledger, Merkle head/proofs | `server/runLedger.ts` |
-| Learning: lessons, examples, pass-count bandit (never touches the charter) | `server/learning.ts` |
+| Learning: lessons, examples, pass-count bandit, per-model shells and writer choice (never touches the charter) | `server/learning.ts` |
 | Drift monitor (e-process) | `server/eprocess.ts` |
 | Deployment self-check | `server/doctor.ts`, `scripts/doctor.ts` |
 | YouTube captions / playlists | `server/youtube.ts` |
 | GitHub guard URL validation | `server/github.ts` |
 | Browser sandbox for untrusted code | `src/utils/sandbox.ts` |
 | Playlist JSON export | `src/utils/playlistExport.ts` |
+| Model providers (Gemini, local/open-source, OpenRouter, OpenAI) | `server/models.ts` |
 | Gemini usage / quota tracking | `server/geminiUsage.ts`, `src/components/DashboardWidget.tsx` |
 | Work snapshots (download / restore) | `src/utils/snapshot.ts`, `src/components/SessionMemoryModal.tsx` |
 | Bitcoin-anchored timestamps (OpenTimestamps) | `scripts/anchor.ts`, `anchors/` |

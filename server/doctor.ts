@@ -33,6 +33,11 @@ export interface DoctorInput {
     tampered: { id: string; why: string }[];
     loadProblems: string[];
   };
+  models?: {
+    configured: string[];
+    cascade: { total: number; usable: string[] };
+    review: { total: number; usable: string[] } | null;
+  };
   geminiQuota?: { allModelsExhausted: boolean; secondsUntilReset: number; models: { model: string; dailyQuotaReached: boolean; lastRefusalAt: string | null }[] };
 }
 
@@ -40,18 +45,55 @@ export function diagnose(i: DoctorInput): { status: Severity; findings: Finding[
   const f: Finding[] = [];
   const { env } = i;
 
-  f.push(
-    env.GEMINI_API_KEY
-      ? { check: 'gemini', severity: 'ok', detail: 'GEMINI_API_KEY is set (not called by doctor)' }
-      : {
-          check: 'gemini',
-          severity: 'BLOCK',
-          detail: 'No GEMINI_API_KEY: RCL synthesis and the LLM review cannot run; every guard run will fail closed',
-          next: 'set GEMINI_API_KEY in .env',
-        }
-  );
+  if (i.models) {
+    // Which providers are set up, and whether the models the app and the guards use can be called.
+    const m = i.models;
+    const c = m.cascade.usable.length;
+    const r = m.review;
+    f.push(
+      !m.configured.length
+        ? {
+            check: 'models',
+            severity: 'BLOCK',
+            detail: 'No model provider configured: RCL synthesis and the LLM review cannot run; every guard run will fail closed',
+            next: 'set GEMINI_API_KEY, or LOCAL_LLM_BASE_URL for a local open model, or OPENROUTER_API_KEY (see .env.example)',
+          }
+        : !c
+        ? {
+            check: 'models',
+            severity: 'BLOCK',
+            detail: `Providers set up (${m.configured.join(', ')}) but none of the ${m.cascade.total} configured models uses them: synthesis cannot run`,
+            next: 'set AETHERSHELL_MODELS to models of a configured provider, e.g. local:qwen3:8b',
+          }
+        : {
+            check: 'models',
+            severity: c < m.cascade.total ? 'DEGRADED' : 'ok',
+            detail: `Providers: ${m.configured.join(', ')}; ${c} of ${m.cascade.total} models callable (${m.cascade.usable.join(', ')}). Not called by doctor`,
+            ...(c < m.cascade.total ? { next: 'models of unconfigured providers are skipped; set their key or drop them from AETHERSHELL_MODELS' } : {}),
+          }
+    );
+    if (r && !r.usable.length) {
+      f.push({
+        check: 'guard-review',
+        severity: 'BLOCK',
+        detail: `None of the charter's ${r.total} review model(s) has a configured provider: every guard run will fail closed`,
+        next: 'configure the provider of a charter review model, or (owner) sign a charter naming models this server can call: npm run owner -- propose',
+      });
+    }
+  } else {
+    f.push(
+      env.GEMINI_API_KEY
+        ? { check: 'gemini', severity: 'ok', detail: 'GEMINI_API_KEY is set (not called by doctor)' }
+        : {
+            check: 'gemini',
+            severity: 'BLOCK',
+            detail: 'No GEMINI_API_KEY: RCL synthesis and the LLM review cannot run; every guard run will fail closed',
+            next: 'set GEMINI_API_KEY in .env',
+          }
+    );
+  }
 
-  if (env.GEMINI_API_KEY && i.geminiQuota) {
+  if (i.geminiQuota) {
     const q = i.geminiQuota;
     const out = q.models.filter((m) => m.dailyQuotaReached).map((m) => m.model);
     const resetIn = `${Math.floor(q.secondsUntilReset / 3600)}h ${Math.floor((q.secondsUntilReset % 3600) / 60)}m`;
@@ -60,8 +102,8 @@ export function diagnose(i: DoctorInput): { status: Severity; findings: Finding[
         check: 'gemini-quota',
         severity: q.allModelsExhausted ? 'BLOCK' : 'DEGRADED',
         detail: q.allModelsExhausted
-          ? `Google refused every model today (daily quota used up); synthesis and guard reviews fail closed until the reset in about ${resetIn}`
-          : `Google reports the daily quota used up for ${out.join(', ')}; the other models are still tried. Reset in about ${resetIn}`,
+          ? `Every model was refused today (daily quota used up); synthesis and guard reviews fail closed until the reset in about ${resetIn}`
+          : `Daily quota reported used up for ${out.join(', ')}; the other models are still tried. Reset in about ${resetIn}`,
         next: 'wait for midnight Pacific, or enable billing on the Gemini project in AI Studio',
       });
     }

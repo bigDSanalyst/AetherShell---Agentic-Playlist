@@ -115,6 +115,7 @@ export async function runRclSsiCycle(params: {
   sessionMemory?: any;
   rclIterations?: number | 'auto';
   userDirectives?: string;
+  writer?: string; // a model ref, 'auto' (AetherTwin chooses), or omitted (first configured)
 }): Promise<{
   rclResult: RclAnalysis;
   innershellLogic: InnershellLogic;
@@ -415,7 +416,20 @@ export interface GeminiUsageReport {
   }[];
 }
 
-export async function fetchGeminiUsage(): Promise<{ keySet: boolean; usage: GeminiUsageReport }> {
+export interface ModelInfo {
+  ref: string; // "provider:model", as the server names it
+  provider: string;
+  model: string;
+  available: boolean; // the provider is set up on the server
+}
+
+export async function fetchModels(): Promise<{ models: ModelInfo[]; guardReviewModels: string[] | null }> {
+  const res = await apiFetch('/api/models');
+  if (!res.ok) throw new Error(`server answered ${res.status}`);
+  return res.json();
+}
+
+export async function fetchGeminiUsage(): Promise<{ providers: string[]; usage: GeminiUsageReport }> {
   const res = await apiFetch('/api/gemini/usage');
   if (!res.ok) throw new Error(`server answered ${res.status}`);
   return res.json();
