@@ -71,11 +71,11 @@ test('the source is what the server recorded for this exact text, else unrecorde
   const keys = loadSigningKeys({});
   const l = new RunLedger(keys, null);
   const a = 'a'.repeat(64);
-  assert.deepEqual(transcriptSourceFromLedger(l.all() as any, a), { source: 'unrecorded', model: null });
+  assert.deepEqual(transcriptSourceFromLedger(l.all() as any, a), { source: 'unrecorded', model: null, imported: false });
   l.append('ingest', { videoId: 'v', transcriptSha256: a, source: 'youtube-captions', model: null, via: 'x' });
   l.append('ingest', { videoId: 'v', transcriptSha256: 'b'.repeat(64), source: 'owner-provided', model: null, via: 'x' });
   l.append('ingest', { videoId: 'v', transcriptSha256: a, source: 'model-transcription', model: 'gemini-flash-latest', via: 'x' });
-  assert.deepEqual(transcriptSourceFromLedger(l.all() as any, a), { source: 'model-transcription', model: 'gemini-flash-latest' });
+  assert.deepEqual(transcriptSourceFromLedger(l.all() as any, a), { source: 'model-transcription', model: 'gemini-flash-latest', imported: false });
   assert.equal(l.verify().ok, true);
 });
 
@@ -137,4 +137,53 @@ test('rate-limit wait: what the provider asks for, capped; 30s when it does not 
   assert.equal(retryDelaySeconds(new Error('Please retry in 12.4s.')), 13);
   assert.equal(retryDelaySeconds(new Error('retry in 600s')), 60);
   assert.equal(retryDelaySeconds(new Error('429 quota')), 30);
+});
+
+test('the archive saves to a file and restores from it; edited or foreign entries are rejected, not repaired', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { TranscriptArchive } = await import('../server/transcriptArchive');
+  const { signedSourceLabel } = await import('../server/transcribe');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arch-io-'));
+  const segs = (parseTranscription({ segments: [{ start: 0, text: 'Everything said in this video.' }] }) as any).segments;
+  const v = modelTranscribedVideo(base, segs, 'gemini-flash-lite-latest');
+
+  const a = new TranscriptArchive(path.join(dir, 'a.jsonl'), hashTranscript);
+  a.put(v);
+  const file = JSON.parse(JSON.stringify(a.exportFile()));
+  assert.equal(file.format, 'aethershell-transcripts/v1');
+  assert.equal(file.count, 1);
+
+  // A fresh server (empty archive) gets everything back, marked as restored.
+  const b = new TranscriptArchive(path.join(dir, 'b.jsonl'), hashTranscript);
+  const r = b.importFile(file);
+  assert.equal(r.added.length, 1);
+  const back = b.get('abcdefghijk')!;
+  assert.equal(back.rawTranscript, v.rawTranscript);
+  assert.equal(back.source, 'model-transcription');
+  assert.ok(back.importedAt);
+  assert.match(b.restore(base, back).transcriptMethod!.via, /restored from an archive file/);
+  assert.equal(new TranscriptArchive(path.join(dir, 'b.jsonl'), hashTranscript).size, 1); // persisted
+  assert.equal(b.importFile(file).alreadyHere, 1); // importing twice adds nothing
+
+  // An edited entry, an unknown source and a foreign file are rejected with the reason.
+  const bad = JSON.parse(JSON.stringify(file));
+  bad.entries.push({ ...bad.entries[0], videoId: 'zzzzzzzzzzz', rawTranscript: bad.entries[0].rawTranscript + ' extra' });
+  bad.entries.push({ ...bad.entries[0], videoId: 'yyyyyyyyyyy', source: 'invented' });
+  const c = new TranscriptArchive(null, hashTranscript);
+  const rc = c.importFile(bad);
+  assert.equal(rc.added.length, 1);
+  assert.deepEqual(rc.rejected.map((x) => x.why), ['the text does not match its hash (edited or damaged)', 'unknown source "invented"']);
+  assert.match(c.importFile({ entries: [] }).rejected[0].why, /not an AetherShell transcript archive/);
+
+  // A different transcript of a video already here: the local one is kept.
+  const d = new TranscriptArchive(null, hashTranscript);
+  d.put(ownerProvidedVideo(base, 'A different transcript of this same video, pasted.') as any);
+  const rd = d.importFile(file);
+  assert.equal(rd.keptLocal.length, 1);
+  assert.equal(d.get('abcdefghijk')!.source, 'owner-provided');
+
+  assert.equal(signedSourceLabel({ source: 'model-transcription', model: 'm', imported: true }), 'model-transcription:m (imported)');
+  assert.equal(signedSourceLabel({ source: 'youtube-captions', model: null, imported: false }), 'youtube-captions');
 });

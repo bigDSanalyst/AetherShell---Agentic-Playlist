@@ -65,7 +65,7 @@ Run lint and tests before every commit.
 | Deployment self-check | `server/doctor.ts`, `scripts/doctor.ts` |
 | YouTube captions / playlists | `server/youtube.ts` |
 | Transcripts not from captions (Gemini from the video URL, owner paste) and their recorded source | `server/transcribe.ts`, `src/utils/transcriptSource.ts` |
-| Transcript archive (each video transcribed once; hash-checked on load) and library | `server/transcriptArchive.ts`, `data/transcripts.jsonl`, `src/components/TranscriptLibrary.tsx` |
+| Transcript archive (each video transcribed once; hash-checked on load), library, save to / restore from a file | `server/transcriptArchive.ts`, `data/transcripts.jsonl`, `src/components/TranscriptLibrary.tsx` |
 | Chat claim check (citations and outside-corpus sentences; a word check) | `server/claimCheck.ts`, `src/components/ClaimCheckPanel.tsx` |
 | Combining videos: knowledge corpus (fair share, cuts reported), collection ids | `server/corpus.ts`, `src/utils/collection.ts` |
 | GitHub guard URL validation | `server/github.ts` |

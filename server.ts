@@ -16,7 +16,7 @@ import {
   parseYouTubeUrl,
   summarizeTranscriptFailures,
 } from './server/youtube';
-import { TRANSCRIBE_PROMPT, modelTranscribedVideo, ownerProvidedVideo, parseTimestamp, parseTranscription, transcriptSourceFromLedger } from './server/transcribe';
+import { TRANSCRIBE_PROMPT, modelTranscribedVideo, ownerProvidedVideo, parseTimestamp, parseTranscription, signedSourceLabel, transcriptSourceFromLedger } from './server/transcribe';
 import { MalformedTextError, hashLogic, hashTranscript, loadSigningKeys, verifyProvenance, watermarkAndCompress } from './server/provenance';
 import { bigramOverlap, changeBetween, contentTokens, logicClaimText, round4, wordOverlap } from './server/grounding';
 import { resolveGitHubFile } from './server/github';
@@ -1053,6 +1053,42 @@ async function startServer() {
     res.json({ videos: transcriptArchive.list(), path: transcriptArchive.path, problems: transcriptArchive.loadProblems });
   });
 
+  // The whole archive as one file, to keep somewhere that survives this server
+  // (the phone's Downloads, Google Drive) and restore after a fresh start.
+  app.get('/api/transcripts/export', (_req: Request, res: Response) => {
+    const file = transcriptArchive.exportFile();
+    res.setHeader('Content-Disposition', `attachment; filename="aethershell-transcripts-${file.exportedAt.slice(0, 10)}.json"`);
+    res.json(file);
+  });
+
+  // Restore an archive file. Entries are checked against their hashes; each
+  // restored one is recorded in the ledger as imported, so its source label is
+  // signed as stated by the file ("(imported)"), not as observed here.
+  app.post('/api/transcripts/import', (req: Request, res: Response) => {
+    const result = transcriptArchive.importFile(req.body);
+    for (const e of result.added) {
+      try {
+        runLedger.append('ingest', {
+          videoId: e.videoId,
+          transcriptSha256: e.transcriptSha256,
+          source: e.source,
+          model: e.model,
+          via: e.via,
+          imported: true,
+        });
+      } catch (err: any) {
+        console.warn(`[ledger] could not record import of ${e.videoId}: ${err.message}`);
+      }
+    }
+    const status = result.rejected.length && !result.added.length && !result.alreadyHere ? 400 : 200;
+    res.status(status).json({
+      added: result.added.map((e) => ({ videoId: e.videoId, title: e.title })),
+      alreadyHere: result.alreadyHere,
+      keptLocal: result.keptLocal,
+      rejected: result.rejected,
+    });
+  });
+
   // Several archived videos as one set for the knowledge engine and innershell.
   // The same videos always give the same id.
   app.post('/api/transcripts/collection', (req: Request, res: Response) => {
@@ -1109,11 +1145,12 @@ async function startServer() {
         logic: pertainedLogic,
         videoId: typeof videoId === 'string' ? videoId : undefined,
         playlistId: typeof playlistId === 'string' ? playlistId : undefined,
-        transcriptSource: origin.model ? `${origin.source}:${origin.model}` : origin.source,
+        transcriptSource: signedSourceLabel(origin),
       });
       const entry = runLedger.append('bind', {
         transcriptSource: origin.source,
         transcriptModel: origin.model,
+        transcriptImported: origin.imported,
         watermarkId: out.watermark.watermarkId,
         transcriptSha256: out.watermark.manifest.transcriptSha256,
         logicSha256: out.watermark.manifest.logicSha256,
