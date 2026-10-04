@@ -349,6 +349,42 @@ export async function sendSubjugatedChatMessage(params: {
   return res.json();
 }
 
+// The chat answer as it is written: onDelta gets each new piece. Resolves when
+// the answer is complete; rejects on an error (partial text stays with the caller).
+export async function streamSubjugatedChatMessage(
+  params: { messages: { role: string; content: string }[]; playlistTitle?: string; videos: any[]; preferredModel?: string },
+  onDelta: (text: string) => void
+): Promise<{ modelUsed: string | null; degraded?: boolean; corpusCoverage?: CorpusCoverage[]; timestamp: number }> {
+  const res = await apiFetch('/api/knowledge/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...params, stream: true }),
+  });
+  if (!res.ok || !res.body) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Chat request failed');
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n\n')) >= 0) {
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 2);
+      if (!line.startsWith('data:')) continue;
+      const ev = JSON.parse(line.slice(5));
+      if (typeof ev.delta === 'string') onDelta(ev.delta);
+      else if (ev.error) throw new Error(ev.partial ? `${ev.error} (the answer above is incomplete)` : ev.error);
+      else if (ev.done) return ev;
+    }
+  }
+  throw new Error('The answer stopped before it was complete.');
+}
+
 export async function transcribeMicrophoneAudio(params: {
   audioBase64: string;
   mimeType?: string;
@@ -499,7 +535,18 @@ export async function fetchModels(): Promise<{ models: ModelInfo[]; guardReviewM
   return res.json();
 }
 
-export async function fetchGeminiUsage(): Promise<{ providers: string[]; usage: GeminiUsageReport }> {
+// Measured model-call times per task since the server started (server/latency.ts).
+export interface TaskLatency {
+  task: string;
+  calls: number;
+  medianMs: number;
+  p90Ms: number;
+  lastMs: number;
+  lastModel: string;
+  firstTokenMedianMs: number | null;
+}
+
+export async function fetchGeminiUsage(): Promise<{ providers: string[]; usage: GeminiUsageReport; latency?: TaskLatency[] }> {
   const res = await apiFetch('/api/gemini/usage');
   if (!res.ok) throw new Error(`server answered ${res.status}`);
   return res.json();
