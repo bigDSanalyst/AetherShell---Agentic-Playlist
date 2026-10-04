@@ -33,6 +33,7 @@ export interface DoctorInput {
     tampered: { id: string; why: string }[];
     loadProblems: string[];
   };
+  transcripts?: { path: string | null; size: number; loadProblems: string[] };
   models?: {
     configured: string[];
     cascade: { total: number; usable: string[] };
@@ -167,6 +168,23 @@ export function diagnose(i: DoctorInput): { status: Severity; findings: Finding[
             next: 'set AETHERSHELL_LEARNING_PATH to a writable file',
           }
         : { check: 'learning', severity: 'ok', detail: `${counts} (${l.path})` }
+    );
+  }
+
+  if (i.transcripts) {
+    const t = i.transcripts;
+    const counts = `${t.size} video transcript(s) archived; re-ingesting them costs no YouTube request or model quota`;
+    f.push(
+      t.loadProblems.length
+        ? {
+            check: 'transcripts',
+            severity: 'DEGRADED',
+            detail: `${counts}; ${t.loadProblems.length} entr(ies) ignored: ${t.loadProblems.slice(0, 3).join('; ')}`,
+            next: `inspect ${t.path}; ignored entries are re-fetched or re-transcribed when next needed`,
+          }
+        : !t.path
+        ? { check: 'transcripts', severity: 'DEGRADED', detail: `${counts}; kept in memory only, lost on restart`, next: 'set AETHERSHELL_TRANSCRIPTS_PATH to a writable file' }
+        : { check: 'transcripts', severity: 'ok', detail: `${counts} (${t.path})` }
     );
   }
 

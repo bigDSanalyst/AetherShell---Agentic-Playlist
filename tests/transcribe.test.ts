@@ -99,3 +99,42 @@ test('the transcript source is signed: both verifiers accept it, and changing it
   const old = watermarkAndCompress(keys, { rawTranscript, logic });
   assert.equal('transcriptSource' in old.watermark.manifest, false);
 });
+
+test('the archive keeps each transcript once, restores it with its source, and ignores edited entries', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { TranscriptArchive } = await import('../server/transcriptArchive');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'arch-')), 'transcripts.jsonl');
+  const segs = (parseTranscription({ segments: [{ start: 0, text: 'Everything said in this video.' }] }) as any).segments;
+  const v = modelTranscribedVideo(base, segs, 'gemini-flash-lite-latest');
+
+  const a = new TranscriptArchive(file, hashTranscript);
+  assert.equal(a.put(base), false); // no transcript, nothing kept
+  assert.equal(a.put(v), true);
+  assert.equal(a.put(v), false); // same text and source: not kept twice
+
+  const b = new TranscriptArchive(file, hashTranscript);
+  assert.equal(b.size, 1);
+  const r = b.restore({ ...base, title: 'Listed title' }, b.get('abcdefghijk')!);
+  assert.equal(r.rawTranscript, v.rawTranscript);
+  assert.equal(r.transcriptSource, 'model-transcription');
+  assert.equal(r.transcriptMethod?.model, 'gemini-flash-lite-latest');
+  assert.equal(r.title, 'Listed title');
+  assert.equal(r.fromArchive, true);
+  assert.equal(r.transcriptError, undefined);
+
+  // An entry whose text was edited no longer matches its hash: ignored and reported.
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('Everything said', 'Nothing said'));
+  const c = new TranscriptArchive(file, hashTranscript);
+  assert.equal(c.get('abcdefghijk'), null);
+  assert.match(c.loadProblems[0], /does not match its hash/);
+});
+
+test('rate-limit wait: what the provider asks for, capped; 30s when it does not say', async () => {
+  const { retryDelaySeconds } = await import('../server/transcriptArchive');
+  assert.equal(retryDelaySeconds(new Error('429 RESOURCE_EXHAUSTED ... "retryDelay":"33s"')), 33);
+  assert.equal(retryDelaySeconds(new Error('Please retry in 12.4s.')), 13);
+  assert.equal(retryDelaySeconds(new Error('retry in 600s')), 60);
+  assert.equal(retryDelaySeconds(new Error('429 quota')), 30);
+});

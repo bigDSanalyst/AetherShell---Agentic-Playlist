@@ -65,6 +65,7 @@ Run lint and tests before every commit.
 | Deployment self-check | `server/doctor.ts`, `scripts/doctor.ts` |
 | YouTube captions / playlists | `server/youtube.ts` |
 | Transcripts not from captions (Gemini from the video URL, owner paste) and their recorded source | `server/transcribe.ts`, `src/utils/transcriptSource.ts` |
+| Transcript archive (each video transcribed once; hash-checked on load) | `server/transcriptArchive.ts`, `data/transcripts.jsonl` |
 | GitHub guard URL validation | `server/github.ts` |
 | Browser sandbox for untrusted code | `src/utils/sandbox.ts` |
 | Playlist JSON export | `src/utils/playlistExport.ts` |

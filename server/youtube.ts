@@ -27,6 +27,7 @@ export interface IngestedVideo {
   transcriptError?: string;
   transcriptRefusal?: YouTubeRefusalKind; // set when YouTube refused the server rather than the video lacking captions
   uploadDate?: string; // ISO 8601, only when the YouTube Data API provided it
+  fromArchive?: boolean; // read from this server's transcript archive, not fetched now
 }
 
 export type ParsedYouTubeUrl = { kind: 'video'; videoId: string } | { kind: 'playlist'; playlistId: string };

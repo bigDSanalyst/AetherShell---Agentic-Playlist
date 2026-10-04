@@ -3,8 +3,17 @@ import type { VideoNode } from '../types';
 // How a transcript's origin is shown. A machine transcription or a pasted
 // transcript is never shown as YouTube captions.
 export function transcriptSourceLabel(
-  v: Pick<VideoNode, 'rawTranscript' | 'transcriptSource' | 'transcriptMethod'>,
+  v: Pick<VideoNode, 'rawTranscript' | 'transcriptSource' | 'transcriptMethod' | 'fromArchive'>,
   isDemo = false
+): { text: string; short: string; detail: string; className: string } | null {
+  const label = baseLabel(v, isDemo);
+  if (!label || !v.fromArchive) return label;
+  return { ...label, text: `${label.text} · archived`, detail: `${label.detail}. Read from this server's transcript archive.` };
+}
+
+function baseLabel(
+  v: Pick<VideoNode, 'rawTranscript' | 'transcriptSource' | 'transcriptMethod'>,
+  isDemo: boolean
 ): { text: string; short: string; detail: string; className: string } | null {
   if (!v.rawTranscript) return null;
   if (isDemo) return { text: 'Demo (synthetic)', short: 'demo', detail: 'Synthetic demo text, not a real video', className: 'text-amber-300' };

@@ -4,7 +4,7 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import { loadSigningKeys } from '../server/provenance';
+import { hashTranscript, loadSigningKeys } from '../server/provenance';
 import { RunLedger } from '../server/runLedger';
 import { ledgerDrift } from '../server/eprocess';
 import { diagnose, renderFindings } from '../server/doctor';
@@ -14,6 +14,7 @@ import { concerns } from '../server/exchange';
 import { LearningStore } from '../server/learning';
 import { GeminiUsage } from '../server/geminiUsage';
 import { modelCascade, modelStatus } from '../server/models';
+import { TranscriptArchive } from '../server/transcriptArchive';
 
 dotenv.config({ quiet: true } as any);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -39,6 +40,11 @@ const result = diagnose({
   exchange: (() => {
     const cs = concerns(ledger.all() as any);
     return { awaitingOwner: cs.filter((c) => c.status === 'awaiting-owner').length, awaitingSystem: cs.filter((c) => c.status === 'awaiting-system').length };
+  })(),
+  transcripts: (() => {
+    const p = process.env.AETHERSHELL_TRANSCRIPTS_PATH ?? path.join(root, 'data', 'transcripts.jsonl');
+    const a = new TranscriptArchive(p || null, hashTranscript);
+    return { path: a.path, size: a.size, loadProblems: a.loadProblems };
   })(),
   models: modelStatus(process.env, modelCascade(process.env), charter.signed?.charter.guard.reviewModels ?? null),
   geminiQuota: (() => {

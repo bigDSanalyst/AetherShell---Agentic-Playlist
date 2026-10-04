@@ -188,9 +188,11 @@ export default function App() {
     const withText = res.playlist.videos.filter((v) => v.rawTranscript).length;
     const bySource = (src: string) => res.playlist.videos.filter((v) => v.rawTranscript && v.transcriptSource === src).length;
     const machine = bySource('model-transcription');
+    const archived = res.playlist.videos.filter((v) => v.fromArchive).length;
     showToast(
       `Ingested "${res.playlist.title}": transcripts for ${withText}/${res.playlist.videos.length} video(s)` +
-        ` (${bySource('youtube-captions')} YouTube captions${machine ? `, ${machine} machine-transcribed by Gemini` : ''})` +
+        ` (${bySource('youtube-captions')} YouTube captions${machine ? `, ${machine} machine-transcribed by Gemini` : ''}` +
+        `${archived ? `; ${archived} from the archive, no quota used` : ''})` +
         (res.transcriptProblems ? ` · ${res.transcriptProblems}` : '') +
         (res.metadataNote ? ` · ${res.metadataNote}` : ''),
       withText === res.playlist.videos.length ? 'success' : 'info'
@@ -230,6 +232,7 @@ export default function App() {
     transcriptMethod: sv.transcriptMethod,
     transcriptLanguage: sv.transcriptLanguage,
     transcriptError: undefined,
+    fromArchive: false,
     // A new transcript is no longer the one that was signed.
     watermark: undefined,
     compressedTranscript: undefined,

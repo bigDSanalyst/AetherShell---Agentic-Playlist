@@ -51,6 +51,7 @@ import { configuredProviders, modelCascade, modelStatus, openAICompatibleGenerat
 import { LearningStore, chooseArm, chooseWriter, learningPromptBlock, lessonEffect, lessonEffectConfidence, modelShells, playlistKeyOf, synthesisOutcomes, armStats } from './server/learning';
 import { ledgerDrift } from './server/eprocess';
 import { diagnose } from './server/doctor';
+import { TranscriptArchive, retryDelaySeconds } from './server/transcriptArchive';
 import { envFloat, envInt, rateLimit, requireAccessToken } from './server/http';
 
 dotenv.config();
@@ -210,6 +211,13 @@ const DRIFT_ALPHA = envFloat('DRIFT_ALPHA', 0.01);
 // charter. AETHERSHELL_LEARNING_PATH="" keeps it in memory only.
 const LEARNING_PATH = process.env.AETHERSHELL_LEARNING_PATH ?? path.resolve(__dirname, 'data', 'learning.jsonl');
 const learningStore = new LearningStore(LEARNING_PATH || null);
+// Transcripts this server produced, so each video is transcribed once
+// (server/transcriptArchive.ts). AETHERSHELL_TRANSCRIPTS_PATH="" keeps it in memory only.
+const TRANSCRIPTS_PATH = process.env.AETHERSHELL_TRANSCRIPTS_PATH ?? path.resolve(__dirname, 'data', 'transcripts.jsonl');
+const transcriptArchive = new TranscriptArchive(TRANSCRIPTS_PATH || null, hashTranscript);
+if (transcriptArchive.loadProblems.length) {
+  console.warn(`[archive] ${TRANSCRIPTS_PATH}: ${transcriptArchive.loadProblems.join('; ')}`);
+}
 
 function learningReport(playlistKey?: string) {
   const entries = runLedger.all();
@@ -261,6 +269,15 @@ if (signingKeys.ephemeral) {
 const MODEL_CASCADE = modelCascade(process.env);
 const PROVIDER_CONFIG = configuredProviders(process.env);
 // Speech-to-text for the microphone uses Gemini's audio input.
+// Transcribing a video is simple but token-heavy, so the cheapest Gemini model
+// (with the most free quota) goes first; the rest of the Gemini cascade follows.
+// GEMINI_TRANSCRIBE_MODEL overrides the first choice.
+const VIDEO_TRANSCRIBE_MODELS = [
+  ...new Set([
+    process.env.GEMINI_TRANSCRIBE_MODEL || 'gemini-flash-lite-latest',
+    ...MODEL_CASCADE.filter((ref) => parseModelRef(ref).provider === 'gemini'),
+  ]),
+];
 const TRANSCRIBE_MODEL =
   process.env.GEMINI_TRANSCRIBE_MODEL || MODEL_CASCADE.map(parseModelRef).find((m) => m.provider === 'gemini')?.model || 'gemini-flash-latest';
 
@@ -758,6 +775,11 @@ async function startServer() {
 
   function recordIngest(v: IngestedVideo) {
     if (!v.rawTranscript || v.transcriptSource === 'unavailable') return;
+    try {
+      transcriptArchive.put(v);
+    } catch (e: any) {
+      console.warn(`[archive] could not keep the transcript of ${v.youtubeId}: ${e.message}`);
+    }
     const sha = hashTranscript(v.rawTranscript);
     if (transcriptSourceFromLedger(runLedger.all(), sha).source === v.transcriptSource) return;
     try {
@@ -776,28 +798,38 @@ async function startServer() {
   // Gemini watches the public video by URL and writes down what is said
   // (server/transcribe.ts). Only Gemini models take a YouTube URL as input.
   async function transcribeWithModel(v: IngestedVideo, durationSeconds?: number): Promise<IngestedVideo> {
-    const models = MODEL_CASCADE.filter((ref) => parseModelRef(ref).provider === 'gemini');
-    if (!PROVIDER_CONFIG.gemini || !models.length) {
+    const models = VIDEO_TRANSCRIBE_MODELS;
+    if (!PROVIDER_CONFIG.gemini) {
       return { ...v, transcriptError: `${v.transcriptError ? v.transcriptError + ' ' : ''}Machine transcription needs a Gemini model; none is configured.` };
     }
-    const got: { result?: ReturnType<typeof parseTranscription> } = {};
-    try {
-      const { modelUsed } = await callModel({
-        contents: [{ role: 'user', parts: [{ fileData: { fileUri: v.url } }, { text: TRANSCRIBE_PROMPT }] }],
-        config: { responseMimeType: 'application/json', mediaResolution: MediaResolution.MEDIA_RESOLUTION_LOW },
-        models,
-        taskName: 'transcribe-video',
-        accept: (text) => {
-          const data = parseModelJson(text);
-          got.result = data === undefined ? { error: 'invalid JSON' } : parseTranscription(data, durationSeconds);
-          return 'segments' in got.result;
-        },
-      });
-      const r = got.result;
-      return r && 'segments' in r ? modelTranscribedVideo(v, r.segments, modelUsed) : v;
-    } catch (e: any) {
-      const why = got.result && 'error' in got.result && got.result.error !== 'invalid JSON' ? got.result.error : e?.message || String(e);
-      return { ...v, transcriptError: `${v.transcriptError ? v.transcriptError + ' ' : ''}Machine transcription also failed: ${why}` };
+    // A per-minute rate limit clears by itself: wait as long as the provider asks
+    // (capped) and try again, at most twice. A daily quota does not; stop.
+    for (let attempt = 0; ; attempt++) {
+      const got: { result?: ReturnType<typeof parseTranscription> } = {};
+      try {
+        const { modelUsed } = await callModel({
+          contents: [{ role: 'user', parts: [{ fileData: { fileUri: v.url } }, { text: TRANSCRIBE_PROMPT }] }],
+          config: { responseMimeType: 'application/json', mediaResolution: MediaResolution.MEDIA_RESOLUTION_LOW },
+          models,
+          taskName: 'transcribe-video',
+          accept: (text) => {
+            const data = parseModelJson(text);
+            got.result = data === undefined ? { error: 'invalid JSON' } : parseTranscription(data, durationSeconds);
+            return 'segments' in got.result;
+          },
+        });
+        const r = got.result;
+        return r && 'segments' in r ? modelTranscribedVideo(v, r.segments, modelUsed) : v;
+      } catch (e: any) {
+        if (attempt < 2 && !got.result && classifyGeminiError(e) === 'rate-limit') {
+          const wait = retryDelaySeconds(e);
+          console.warn(`[model] transcribe-video ${v.youtubeId}: rate-limited; retrying in ${wait}s`);
+          await new Promise((r) => setTimeout(r, wait * 1000));
+          continue;
+        }
+        const why = got.result && 'error' in got.result && got.result.error !== 'invalid JSON' ? got.result.error : e?.message || String(e);
+        return { ...v, transcriptError: `${v.transcriptError ? v.transcriptError + ' ' : ''}Machine transcription also failed: ${why}` };
+      }
     }
   }
 
@@ -805,9 +837,12 @@ async function startServer() {
     items: { videoId: string; title?: string; channel?: string; uploadDate?: string; duration?: string }[],
     opts: { modelFallback?: boolean } = {}
   ) {
-    const videos: IngestedVideo[] = await mapWithConcurrency(items, 3, (it) =>
-      fetchVideoTranscript(it.videoId, { title: it.title, channel: it.channel })
-    );
+    // A video transcribed before is read from the archive: no YouTube request, no quota.
+    const videos: IngestedVideo[] = await mapWithConcurrency(items, 3, (it) => {
+      const kept = transcriptArchive.get(it.videoId);
+      if (kept) return Promise.resolve(transcriptArchive.restore({ ...bareVideo(it.videoId, it.title), channel: it.channel || '' }, kept));
+      return fetchVideoTranscript(it.videoId, { title: it.title, channel: it.channel });
+    });
     // When YouTube refuses this server or the video has no captions, transcribe the
     // video itself. Not for private or removed videos (the model cannot see them either).
     if (opts.modelFallback) {
@@ -1716,6 +1751,7 @@ Return JSON: { "passed": boolean, "score": 0-100, "decision": "APPROVED" | "QUAR
         charter: { ok: charterState.ok, problems: charterState.problems, version: charterState.signed?.charter.version ?? null },
         exchange: exchangeCounts(),
         learning: { path: learningStore.filePath, ...learningStore.report(runLedger.all()) },
+        transcripts: { path: transcriptArchive.path, size: transcriptArchive.size, loadProblems: transcriptArchive.loadProblems },
         geminiQuota: geminiUsage.report(usageModels(), dailyLimitFor),
         models: modelStatus(process.env, MODEL_CASCADE, charterState.signed?.charter.guard.reviewModels ?? null),
       })

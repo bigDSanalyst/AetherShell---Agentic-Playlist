@@ -57,6 +57,7 @@ export interface VideoNode {
   // pasted by the owner. The server records which, and signs it at bind.
   transcriptSource?: 'youtube-captions' | 'model-transcription' | 'owner-provided' | 'unavailable';
   transcriptMethod?: { model?: string; via: string; at: string };
+  fromArchive?: boolean; // read from the server's transcript archive (no new fetch or quota)
   transcriptLanguage?: string;
   transcriptError?: string;
   uploadDate?: string; // ISO 8601 from the YouTube Data API; absent when unknown
