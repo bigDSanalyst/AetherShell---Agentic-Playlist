@@ -115,10 +115,20 @@ interface Entry {
 }
 
 // Where a transcript came from, as this server recorded it when it produced it.
-export function transcriptSourceFromLedger(entries: readonly Entry[], transcriptSha256: string): { source: TranscriptSource | 'unrecorded'; model: string | null } {
+// "imported": the source was stated by an archive file the owner restored, not
+// observed by this server when it produced the transcript.
+export function transcriptSourceFromLedger(
+  entries: readonly Entry[],
+  transcriptSha256: string
+): { source: TranscriptSource | 'unrecorded'; model: string | null; imported: boolean } {
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i];
-    if (e.kind === 'ingest' && e.data.transcriptSha256 === transcriptSha256) return { source: e.data.source, model: e.data.model ?? null };
+    if (e.kind === 'ingest' && e.data.transcriptSha256 === transcriptSha256) return { source: e.data.source, model: e.data.model ?? null, imported: !!e.data.imported };
   }
-  return { source: 'unrecorded', model: null };
+  return { source: 'unrecorded', model: null, imported: false };
+}
+
+// The source as signed into a manifest: "source[:model][ (imported)]".
+export function signedSourceLabel(o: { source: string; model: string | null; imported: boolean }): string {
+  return `${o.source}${o.model ? `:${o.model}` : ''}${o.imported ? ' (imported)' : ''}`;
 }

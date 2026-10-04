@@ -105,6 +105,41 @@ export interface LibraryEntry {
   at: string;
   words: number;
   segments: number;
+  imported?: boolean;
+}
+
+// The whole transcript archive as a file (to keep outside the server).
+export async function exportTranscriptArchive(): Promise<{ text: string; filename: string; count: number }> {
+  const res = await apiFetch('/api/transcripts/export');
+  if (!res.ok) throw new Error('Failed to export the transcript archive');
+  const text = await res.text();
+  const m = (res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/);
+  return { text, filename: m ? m[1] : 'aethershell-transcripts.json', count: JSON.parse(text).count ?? 0 };
+}
+
+export interface ArchiveImportResult {
+  added: { videoId: string; title: string }[];
+  alreadyHere: number;
+  keptLocal: { videoId: string; title: string }[];
+  rejected: { entry: number; videoId: string | null; why: string }[];
+}
+
+// Restores a transcript archive file into the server's archive.
+export async function importTranscriptArchive(fileText: string): Promise<ArchiveImportResult> {
+  let body: unknown;
+  try {
+    body = JSON.parse(fileText);
+  } catch {
+    throw new Error('That file is not JSON; choose a file saved with "Save archive to a file".');
+  }
+  const res = await apiFetch('/api/transcripts/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok && !data.rejected) throw new Error(data.error || 'Failed to restore the archive');
+  return data;
 }
 
 // Every transcript the server has kept (its archive).
