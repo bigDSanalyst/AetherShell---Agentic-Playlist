@@ -25,6 +25,7 @@ import { PlaylistData, VideoNode, CuratedPlaylistSummary } from '../types';
 import { VideoMetadataCard } from './VideoMetadataCard';
 import { copyText } from '../utils/clipboard';
 import { transcriptSourceLabel } from '../utils/transcriptSource';
+import { TranscriptLibrary } from './TranscriptLibrary';
 
 interface PlaylistIngestionProps {
   playlist: PlaylistData | null;
@@ -37,6 +38,9 @@ interface PlaylistIngestionProps {
   onPasteTranscript: (video: VideoNode, text: string) => Promise<boolean>;
   modelFallback: boolean;
   setModelFallback: (on: boolean) => void;
+  addToSet: boolean;
+  setAddToSet: (on: boolean) => void;
+  onLoadCollection: (videoIds: string[], title?: string) => void;
   transcribeProgress?: { current: number; total: number; currentTitle: string; percent: number } | null;
   isLoading: boolean;
   onProceedToInnershell: () => void;
@@ -54,6 +58,9 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
   onPasteTranscript,
   modelFallback,
   setModelFallback,
+  addToSet,
+  setAddToSet,
+  onLoadCollection,
   transcribeProgress,
   isLoading,
   onProceedToInnershell,
@@ -178,6 +185,15 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
           />
           If YouTube refuses or a video has no captions, transcribe it with Gemini (labelled machine transcription; uses Gemini quota)
         </label>
+        <label className="mt-1 flex items-center gap-2 text-[11px] font-mono text-slate-400 cursor-pointer select-none">
+          <input type="checkbox" checked={addToSet} onChange={(e) => setAddToSet(e.target.checked)} className="accent-cyan-500" />
+          Add what I ingest to the current set (keep the videos already loaded) instead of replacing it
+        </label>
+        <TranscriptLibrary
+          isLoading={isLoading}
+          currentVideoIds={(playlist?.videos || []).map((v) => v.youtubeId)}
+          onLoadCollection={onLoadCollection}
+        />
 
         {playlist && (
           <div className="mt-4 pt-3 border-t border-slate-800/60 flex flex-wrap items-center justify-between text-xs text-slate-400">

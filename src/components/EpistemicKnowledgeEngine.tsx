@@ -36,6 +36,7 @@ import {
   transcribeMicrophoneAudio,
   fetchModels,
   type ModelInfo,
+  type CorpusCoverage,
 } from '../services/api';
 
 interface EpistemicKnowledgeEngineProps {
@@ -58,6 +59,8 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
   const [focusQuery, setFocusQuery] = useState('');
   const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [knowledge, setKnowledge] = useState<SynthesizedKnowledge | null>(null);
+  // Videos the server had to cut for length on the last request (never silent).
+  const [cutVideos, setCutVideos] = useState<CorpusCoverage[]>([]);
   // Models come from the server: whatever providers it is set up for (Gemini, local, OpenRouter, ...).
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelsError, setModelsError] = useState<string | null>(null);
@@ -119,6 +122,7 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
       });
 
       setKnowledge(res.knowledge);
+      setCutVideos((res.corpusCoverage || []).filter((c) => !c.complete));
 
       // Record in session memory
       onUpdateSessionMemory({
@@ -160,6 +164,7 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
         preferredModel: selectedModel,
       });
 
+      setCutVideos((res.corpusCoverage || []).filter((c) => !c.complete));
       const modelMsg: ChatMessage = {
         id: `model-${Date.now()}`,
         role: 'model',
@@ -330,12 +335,19 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
             </div>
 
             {/* Corpus size: an estimate, and what the server actually sends */}
-            <div className="px-3 py-1.5 rounded-lg bg-indigo-950/80 border border-indigo-700/60 text-indigo-300" title="Tokens estimated at 1.35 per word. The server sends at most 45,000 characters of transcript per request.">
+            <div className="px-3 py-1.5 rounded-lg bg-indigo-950/80 border border-indigo-700/60 text-indigo-300" title="Tokens estimated at 1.35 per word. The server sends up to KNOWLEDGE_MAX_CORPUS_CHARS characters (default 400,000), sharing them fairly between videos.">
               <span>Corpus ≈ </span>
               <strong className="text-emerald-400">{Math.round(totalWords * 1.35).toLocaleString()} tokens</strong>
-              <span className="text-slate-500"> (sent: up to 45,000 characters)</span>
+              <span className="text-slate-500"> (sent: up to the server's limit, shared fairly between videos)</span>
             </div>
           </div>
+          {cutVideos.length > 0 && (
+            <p className="mt-2 text-[11px] font-mono text-amber-300" role="status">
+              Too long to send whole: the model read only part of{' '}
+              {cutVideos.map((c) => `Video ${c.video} "${c.title}" (${Math.round((100 * c.includedChars) / Math.max(1, c.totalChars))}%)`).join(', ')}.
+              Combine fewer videos, or raise KNOWLEDGE_MAX_CORPUS_CHARS on the server.
+            </p>
+          )}
         </div>
 
         {/* Synthesis Mode Selector & Trigger */}

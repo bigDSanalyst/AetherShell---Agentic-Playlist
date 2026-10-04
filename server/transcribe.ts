@@ -60,11 +60,15 @@ export function parseTranscription(data: any, durationSeconds?: number): { segme
     if (start === null) return { error: `segment ${i + 1} has no valid start time` };
     if (!text) continue;
     if (start + 1 < last) return { error: `segment ${i + 1} goes back in time (${fmt(start)} after ${fmt(last)})` };
-    if (durationSeconds && start > durationSeconds + 5) return { error: `segment ${i + 1} starts at ${fmt(start)}, after the video ends (${fmt(durationSeconds)})` };
+    // Model timestamps drift; only a start well past the end (not a few seconds) is rejected.
+    if (durationSeconds && start > durationSeconds + Math.max(30, durationSeconds * 0.05)) return { error: `segment ${i + 1} starts at ${fmt(start)}, after the video ends (${fmt(durationSeconds)})` };
     last = Math.max(last, start);
     out.push({ id: `seg-${i + 1}`, start: fmt(start), end: '', speaker: 'Speaker', text });
   }
-  for (let i = 0; i < out.length; i++) out[i].end = out[i + 1]?.start ?? (durationSeconds ? fmt(durationSeconds) : '');
+  for (let i = 0; i < out.length; i++) {
+    const last = durationSeconds ? fmt(Math.max(durationSeconds, parseTimestamp(out[i].start)!)) : '';
+    out[i].end = out[i + 1]?.start ?? last;
+  }
   if (out.reduce((n, s) => n + s.text.length, 0) < 20) return { error: 'the transcription is too short to be the video' };
   return { segments: out };
 }

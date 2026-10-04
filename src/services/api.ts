@@ -96,6 +96,40 @@ export async function fetchVideoTranscriptFor(params: {
   return res.json();
 }
 
+export interface LibraryEntry {
+  videoId: string;
+  title: string;
+  source: 'youtube-captions' | 'model-transcription' | 'owner-provided';
+  model: string | null;
+  at: string;
+  words: number;
+  segments: number;
+}
+
+// Every transcript the server has kept (its archive).
+export async function fetchTranscriptLibrary(): Promise<{ videos: LibraryEntry[]; path: string | null; problems: string[] }> {
+  const res = await apiFetch('/api/transcripts/library');
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to load the transcript library');
+  }
+  return res.json();
+}
+
+// Archived videos combined into one set.
+export async function buildCollection(videoIds: string[], title?: string): Promise<{ playlist: PlaylistData; missing: string[] }> {
+  const res = await apiFetch('/api/transcripts/collection', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ videoIds, title }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to combine the videos');
+  }
+  return res.json();
+}
+
 // A transcript the owner pasted; recorded as owner-provided.
 export async function submitProvidedTranscript(params: {
   youtubeId: string;
@@ -267,6 +301,15 @@ export async function validateWithDualGuardShells(params: {
   };
 }
 
+// How much of each video the server actually sent the model (server/corpus.ts).
+export interface CorpusCoverage {
+  video: number;
+  title: string;
+  includedChars: number;
+  totalChars: number;
+  complete: boolean;
+}
+
 export async function synthesizePlaylistKnowledge(params: {
   playlistTitle?: string;
   playlistDescription?: string;
@@ -274,7 +317,7 @@ export async function synthesizePlaylistKnowledge(params: {
   mode?: string;
   focusQuery?: string;
   preferredModel?: string;
-}): Promise<{ knowledge: any; synthesizedAt: number }> {
+}): Promise<{ knowledge: any; synthesizedAt: number; corpusCoverage?: CorpusCoverage[] }> {
   const res = await apiFetch('/api/knowledge/synthesize', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -293,7 +336,7 @@ export async function sendSubjugatedChatMessage(params: {
   videos: any[];
   subjugationStrictness?: number;
   preferredModel?: string;
-}): Promise<{ reply: string; timestamp: number }> {
+}): Promise<{ reply: string; timestamp: number; corpusCoverage?: CorpusCoverage[] }> {
   const res = await apiFetch('/api/knowledge/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
