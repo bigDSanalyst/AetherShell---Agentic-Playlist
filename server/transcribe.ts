@@ -16,7 +16,7 @@ import type { IngestedVideo, TranscriptSegment } from './youtube';
 // Which source produced a transcript is recorded by the server in its ledger
 // ("ingest" entries) and looked up there when signing; the browser cannot set it.
 
-export type TranscriptSource = 'youtube-captions' | 'model-transcription' | 'owner-provided';
+export type TranscriptSource = 'youtube-captions' | 'model-transcription' | 'owner-provided' | 'notebook';
 
 export const TRANSCRIBE_PROMPT = `Transcribe the spoken words of this video.
 

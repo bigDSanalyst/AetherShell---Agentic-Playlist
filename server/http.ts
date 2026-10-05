@@ -39,7 +39,7 @@ export const AI_QUOTA_PREFIXES = [
 
 // POSTs a visitor without the token may make besides the AI calls above:
 // they read or combine what is already there and change nothing.
-export const VISITOR_POSTS = ['/api/transcripts/collection', '/api/auth/verify-token', '/api/auth/check-own-key'];
+export const VISITOR_POSTS = ['/api/transcripts/collection', '/api/auth/verify-token', '/api/auth/check-own-key', '/api/notebooks/export'];
 
 // Everything else that changes state or uses the server's signing key needs the
 // owner's token when one is set: signing (watermark-and-bind), archive import,

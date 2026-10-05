@@ -55,7 +55,8 @@ export interface VideoNode {
   // youtube-captions: YouTube's caption track. model-transcription: a model
   // transcribed the video's audio (transcriptMethod names it). owner-provided:
   // pasted by the owner. The server records which, and signs it at bind.
-  transcriptSource?: 'youtube-captions' | 'model-transcription' | 'owner-provided' | 'unavailable';
+  transcriptSource?: 'youtube-captions' | 'model-transcription' | 'owner-provided' | 'notebook' | 'unavailable';
+  kind?: 'video' | 'notebook'; // a notebook's youtubeId is its notebook id (nb-…), its segments are cells
   transcriptMethod?: { model?: string; via: string; at: string };
   fromArchive?: boolean; // read from the server's transcript archive (no new fetch or quota)
   transcriptLanguage?: string;

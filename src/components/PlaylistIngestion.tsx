@@ -41,6 +41,7 @@ interface PlaylistIngestionProps {
   addToSet: boolean;
   setAddToSet: (on: boolean) => void;
   onLoadCollection: (videoIds: string[], title?: string) => void;
+  onImportNotebookFile: (file: File) => void;
   transcribeProgress?: { current: number; total: number; currentTitle: string; percent: number } | null;
   isLoading: boolean;
   onProceedToInnershell: () => void;
@@ -61,6 +62,7 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
   addToSet,
   setAddToSet,
   onLoadCollection,
+  onImportNotebookFile,
   transcribeProgress,
   isLoading,
   onProceedToInnershell,
@@ -154,7 +156,7 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
               type="text"
               value={inputUrl}
               onChange={(e) => setInputUrl(e.target.value)}
-              placeholder="Paste YouTube Playlist URL (e.g., https://www.youtube.com/playlist?list=...) or Video link"
+              placeholder="YouTube playlist or video link, or a Colab / Drive / GitHub notebook link"
               className="w-full pl-10 pr-4 py-2.5 bg-slate-900/90 border border-slate-700/80 rounded-xl text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 font-mono transition-colors"
             />
           </div>
@@ -185,6 +187,24 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
           />
           If YouTube refuses or a video has no captions, transcribe it with Gemini (labelled machine transcription; uses Gemini quota)
         </label>
+        <label className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-sky-800/60 bg-sky-950/40 text-sky-300 text-[11px] font-mono cursor-pointer hover:bg-sky-900/50" title="A Jupyter / Colab notebook: in Colab, File → Download → Download .ipynb">
+          <FileText className="w-3.5 h-3.5" />
+          Upload a notebook (.ipynb)
+          <input
+            type="file"
+            accept=".ipynb,application/x-ipynb+json,application/json"
+            className="hidden"
+            disabled={isLoading}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onImportNotebookFile(f);
+              e.target.value = '';
+            }}
+          />
+        </label>
+        <p className="mt-1 text-[10px] font-mono text-slate-500">
+          Notebooks join the set next to videos: their text, code and printed outputs, one part per cell. Nothing in them is run. Drive links work only for notebooks shared as "Anyone with the link".
+        </p>
         <label className="mt-1 flex items-center gap-2 text-[11px] font-mono text-slate-400 cursor-pointer select-none">
           <input type="checkbox" checked={addToSet} onChange={(e) => setAddToSet(e.target.checked)} className="accent-cyan-500" />
           Add what I ingest to the current set (keep the videos already loaded) instead of replacing it
@@ -327,6 +347,8 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2">
+                    {activeVideo.kind !== 'notebook' && (
+                      <>
                     <button
                       onClick={() => onDeepTranscribe(activeVideo)}
                       disabled={isLoading || !!playlist?.isDemo}
@@ -356,6 +378,9 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
                     >
                       <ClipboardPaste className="w-4 h-4" />
                     </button>
+
+                      </>
+                    )}
 
                     <button
                       onClick={handleCopyTranscript}

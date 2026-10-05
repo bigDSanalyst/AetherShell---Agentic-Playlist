@@ -15,7 +15,8 @@ interface VideoMetadataCardProps {
 export const VideoMetadataCard: React.FC<VideoMetadataCardProps> = ({ video, index, isActive, isDemo, onSelect }) => {
   const [thumbFailed, setThumbFailed] = useState(false);
   // Demo videos use placeholder ids, so don't request thumbnails for them.
-  const thumb = isDemo ? null : youtubeThumbnailUrl(video.youtubeId);
+  const isNotebook = video.kind === 'notebook';
+  const thumb = isDemo || isNotebook ? null : youtubeThumbnailUrl(video.youtubeId);
   const uploaded = formatUploadDate(video.uploadDate);
   const segCount = video.segments?.length || 0;
   const source = transcriptSourceLabel(video, isDemo);
@@ -53,7 +54,7 @@ export const VideoMetadataCard: React.FC<VideoMetadataCardProps> = ({ video, ind
           ) : (
             <div className="w-full h-full flex flex-col items-center justify-center text-slate-500 text-[9px] font-mono gap-1">
               <ImageOff className="w-4 h-4" />
-              {isDemo ? 'demo video' : 'no thumbnail'}
+              {isNotebook ? 'notebook' : isDemo ? 'demo video' : 'no thumbnail'}
             </div>
           )}
           <span className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-slate-950/85 font-mono text-[10px] text-cyan-300 font-bold">
@@ -124,14 +125,14 @@ export const VideoMetadataCard: React.FC<VideoMetadataCardProps> = ({ video, ind
             </span>
           )}
         </div>
-        {!isDemo && (
+        {!isDemo && video.url && (
           <a
             href={video.url}
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
             className="text-slate-500 hover:text-cyan-300 flex items-center gap-1"
-            title="Open on YouTube"
+            title={isNotebook ? 'Open the notebook' : 'Open on YouTube'}
           >
             {video.youtubeId}
             <ExternalLink className="w-2.5 h-2.5" />

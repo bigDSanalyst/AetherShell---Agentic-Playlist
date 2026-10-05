@@ -34,6 +34,8 @@ import {
   fetchVideoTranscriptFor,
   submitProvidedTranscript,
   buildCollection,
+  importNotebook,
+  isNotebookLink,
   watermarkAndBindCrypto,
   runRclSsiCycle,
   validateWithGuardShell,
@@ -232,6 +234,34 @@ export default function App() {
     };
   }, []);
 
+  // A notebook (uploaded .ipynb or a Colab / Drive / GitHub link) joins the set like a video.
+  const applyNotebook = async (res: Awaited<ReturnType<typeof importNotebook>>) => {
+    const merging = addToSet && !!playlist && !playlist.isDemo;
+    const next = merging ? await mergeIntoSet(playlist!, res.playlist) : res.playlist;
+    setPlaylist(next);
+    const nb = res.playlist.videos[0];
+    if (nb) setActiveVideo(nb);
+    const left = res.leftOut && (res.leftOut.images || res.leftOut.html)
+      ? ` · not included: ${[res.leftOut.images ? `${res.leftOut.images} image output(s)` : '', res.leftOut.html ? `${res.leftOut.html} HTML/JS output(s)` : ''].filter(Boolean).join(', ')}`
+      : '';
+    showToast(
+      `Imported notebook "${nb?.title}" (${nb?.segments?.length ?? 0} cells with text)${left}` + (merging ? ` · added to the current set (now ${next.videos.length})` : ''),
+      'success'
+    );
+  };
+
+  const handleImportNotebookFile = async (file: File) => {
+    setIsLoading(true);
+    try {
+      if (file.size > 10 * 1024 * 1024) throw new Error('The notebook is larger than 10 MB.');
+      await applyNotebook(await importNotebook({ content: await file.text(), filename: file.name }));
+    } catch (err: any) {
+      showToast(err.message || 'Failed to import the notebook', 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const applyIngested = async (res: Awaited<ReturnType<typeof fetchPlaylistData>>) => {
     const merging = addToSet && !!playlist && !playlist.isDemo && !res.playlist.isDemo;
     const before = playlist?.videos.length ?? 0;
@@ -262,7 +292,8 @@ export default function App() {
   const handleIngestUrl = async (url: string) => {
     setIsLoading(true);
     try {
-      await applyIngested(await fetchPlaylistData({ playlistUrl: url, modelFallback }));
+      if (isNotebookLink(url)) await applyNotebook(await importNotebook({ url }));
+      else await applyIngested(await fetchPlaylistData({ playlistUrl: url, modelFallback }));
     } catch (err: any) {
       showToast(err.message || 'Failed to ingest playlist', 'error');
     } finally {
@@ -331,7 +362,7 @@ export default function App() {
       showToast('Demo videos are not real YouTube videos; there is nothing to transcribe', 'info');
       return;
     }
-    const all = playlist?.videos || [];
+    const all = (playlist?.videos || []).filter((v) => v.kind !== 'notebook'); // notebooks have no captions to fetch
     const videosToProcess = targetVideo ? [targetVideo] : method === 'model' ? all.filter((v) => !v.rawTranscript) : all;
     if (videosToProcess.length === 0) {
       showToast(method === 'model' ? 'Every video already has a transcript' : 'No videos to fetch captions for', 'info');
@@ -772,6 +803,7 @@ export default function App() {
             addToSet={addToSet}
             setAddToSet={setAddToSet}
             onLoadCollection={handleLoadCollection}
+            onImportNotebookFile={handleImportNotebookFile}
             transcribeProgress={transcribeProgress}
             isLoading={isLoading}
             onProceedToInnershell={() => setActiveTab('innershell')}
@@ -814,6 +846,7 @@ export default function App() {
             onProceedToCrypto={() => setActiveTab('crypto')}
             lastExecutionResult={lastExecutionResult}
             setLastExecutionResult={setLastExecutionResult}
+            sources={playlist?.isDemo ? [] : playlist?.videos || []}
           />
         )}
 

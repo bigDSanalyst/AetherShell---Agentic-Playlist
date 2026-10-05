@@ -58,7 +58,16 @@ const fmt = (sec: number) => {
 const stem = (w: string) => (w.length > 6 ? w.slice(0, 6) : w);
 const stems = (text: string) => contentTokens(text).map(stem);
 
+// Notebook segments are cells ("cell 7"): a cell is a position, and a citation
+// is checked against that cell and its neighbours.
+const cellOf = (start: unknown) => {
+  const m = String(start ?? '').match(/^cell\s+(\d+)$/i);
+  return m ? Number(m[1]) : null;
+};
+
 function segmentsOf(v: any): Seg[] {
+  const cells = (Array.isArray(v?.segments) ? v.segments : []).filter((s: any) => cellOf(s?.start) !== null && s?.text);
+  if (cells.length) return cells.map((s: any) => ({ start: cellOf(s.start)!, end: cellOf(s.start)!, text: String(s.text) }));
   const raw = (Array.isArray(v?.segments) ? v.segments : [])
     .map((s: any) => ({ start: parseTimestamp(s?.start), end: s?.end ? parseTimestamp(s.end) : null, text: String(s?.text || '') }))
     .filter((s: any) => s.start !== null && s.text);
@@ -70,9 +79,9 @@ function segmentsOf(v: any): Seg[] {
   }));
 }
 
-function windowStems(segs: Seg[], t: number): Set<string> {
+function windowStems(segs: Seg[], t: number, window = WINDOW): Set<string> {
   const out = new Set<string>();
-  for (const s of segs) if (s.end >= t - WINDOW && s.start <= t + WINDOW) stems(s.text).forEach((w) => out.add(w));
+  for (const s of segs) if (s.end >= t - window && s.start <= t + window) stems(s.text).forEach((w) => out.add(w));
   return out;
 }
 
@@ -112,21 +121,23 @@ export function checkChatAnswer(answer: string, videos: any[]): ClaimCheck {
     for (const part of m[0].slice(1, -1).split(';')) {
       const vm = part.match(/Video\s+(\d+)/i);
       if (vm) video = Number(vm[1]);
-      const tm = part.match(/(\d{1,2}:\d{2}(?::\d{2})?)/);
+      const tm = part.match(/(\d{1,2}:\d{2}(?::\d{2})?)|cell\s+(\d+)/i);
       if (!tm || !video) continue;
-      const base = { video, cited: tm[1], claim: claimText.slice(0, 300) };
+      const isCell = tm[2] !== undefined;
+      const base = { video, cited: isCell ? `cell ${tm[2]}` : tm[1], claim: claimText.slice(0, 300) };
       const segs = segsByVideo[video - 1];
       if (!segs) {
         citations.push({ ...base, status: 'no-such-video', overlap: 0 });
         continue;
       }
-      const t = parseTimestamp(tm[1])!;
-      const last = segs.length ? segs[segs.length - 1].end + 60 : 0;
+      const t = isCell ? Number(tm[2]) : parseTimestamp(tm[1])!;
+      const win = isCell ? 1 : WINDOW;
+      const last = segs.length ? segs[segs.length - 1].end + (isCell ? 0 : 60) : 0;
       if (!segs.length || t > last) {
         citations.push({ ...base, status: 'bad-time', overlap: 0 });
         continue;
       }
-      const here = overlap(claim, windowStems(segs, t));
+      const here = overlap(claim, windowStems(segs, t, win));
       if (here >= SUPPORTED) {
         citations.push({ ...base, status: 'supported', overlap: round2(here) });
         continue;
@@ -134,12 +145,13 @@ export function checkChatAnswer(answer: string, videos: any[]): ClaimCheck {
       // Said somewhere else in this video?
       let best = { at: -1, score: 0 };
       for (const s of segs) {
-        const sc = overlap(claim, windowStems(segs, s.start));
+        // Cells: the exact cell where it is said; times: the window around a start.
+        const sc = overlap(claim, windowStems(segs, s.start, isCell ? 0 : win));
         if (sc > best.score) best = { at: s.start, score: sc };
       }
       citations.push(
         best.score >= SUPPORTED
-          ? { ...base, status: 'elsewhere', foundAt: fmt(best.at), overlap: round2(here) }
+          ? { ...base, status: 'elsewhere', foundAt: isCell ? `cell ${best.at}` : fmt(best.at), overlap: round2(here) }
           : { ...base, status: 'unsupported', overlap: round2(here) }
       );
     }
