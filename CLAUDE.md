@@ -68,6 +68,7 @@ Run lint and tests before every commit.
 | Transcript archive (each video transcribed once; hash-checked on load), library, save to / restore from a file | `server/transcriptArchive.ts`, `data/transcripts.jsonl`, `src/components/TranscriptLibrary.tsx` |
 | Chat claim check (citations and outside-corpus sentences; a word check) | `server/claimCheck.ts`, `src/components/ClaimCheckPanel.tsx` |
 | Combining videos: knowledge corpus (fair share, cuts reported), collection ids | `server/corpus.ts`, `src/utils/collection.ts` |
+| Access control, demo allowance, visitor's own Gemini key | `server/http.ts`, `server/byok.ts`, `src/components/DemoLimitModal.tsx`, `src/components/OwnKeyPanel.tsx` |
 | GitHub guard URL validation | `server/github.ts` |
 | Browser sandbox for untrusted code | `src/utils/sandbox.ts` |
 | Playlist JSON export | `src/utils/playlistExport.ts` |

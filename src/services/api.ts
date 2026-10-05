@@ -34,7 +34,44 @@ export function clearStoredAccessToken(): void {
   } catch {}
 }
 
+// The visitor's own Gemini API key ("bring your own key"). Kept in this
+// browser only: for this tab (sessionStorage), or on this device if they ask
+// (localStorage). Sent with each request as x-gemini-api-key so their AI calls
+// run on their own quota; the server never stores it.
+const OWN_KEY = 'aethershell_gemini_key';
+
+export function readOwnGeminiKey(): string {
+  try {
+    return sessionStorage.getItem(OWN_KEY) || localStorage.getItem(OWN_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function clearOwnGeminiKey(): void {
+  try {
+    sessionStorage.removeItem(OWN_KEY);
+  } catch {}
+  try {
+    localStorage.removeItem(OWN_KEY);
+  } catch {}
+}
+
+// Checks the key with the server (a token count on the visitor's key), then keeps it.
+export async function verifyAndSaveOwnGeminiKey(key: string, remember: boolean): Promise<{ valid: boolean; error?: string }> {
+  const k = key.trim();
+  const res = await fetch('/api/auth/check-own-key', { method: 'POST', headers: { 'x-gemini-api-key': k } });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.valid) return { valid: false, error: body.error || 'The key was not accepted' };
+  clearOwnGeminiKey();
+  try {
+    (remember ? localStorage : sessionStorage).setItem(OWN_KEY, k);
+  } catch {}
+  return { valid: true };
+}
+
 export interface DemoStatus {
+  usingOwnKey?: boolean;
   isAuthorized: boolean;
   hasAccessTokenConfigured: boolean;
   ip: string;
@@ -70,6 +107,8 @@ async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> 
     const headers = new Headers(init.headers);
     const token = readToken();
     if (token) headers.set('x-aethershell-token', token);
+    const ownKey = readOwnGeminiKey();
+    if (ownKey) headers.set('x-gemini-api-key', ownKey);
     return fetch(url, { ...init, headers });
   };
   const res = await send();

@@ -16,6 +16,7 @@ import {
   clearStoredAccessToken,
   readToken,
 } from '../services/api';
+import { OwnKeyPanel } from './OwnKeyPanel';
 
 interface DemoLimitModalProps {
   isOpen: boolean;
@@ -147,6 +148,9 @@ export const DemoLimitModal: React.FC<DemoLimitModalProps> = ({
             To prevent unexpected quota exhaustion from public visitors, each IP address receives a
             one-time demo allowance for AI synthesis and chat calls.
           </div>
+
+          {/* Quickest: the visitor's own Gemini key, on this page */}
+          <OwnKeyPanel onChanged={onStatusUpdated} />
 
           {/* Option A: Deploy your own on AI Studio */}
           <div className="p-5 rounded-2xl border border-cyan-500/40 bg-gradient-to-br from-cyan-950/40 via-slate-900 to-indigo-950/40 space-y-4">

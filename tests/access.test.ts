@@ -66,3 +66,30 @@ test('envInt keeps 0 as "use the default"; envIntOrZero accepts 0', () => {
   assert.equal(envIntOrZero('X_TEST_INT', 3), 0);
   delete process.env.X_TEST_INT;
 });
+
+test('a visitor\'s own Gemini key: AI calls are not counted, owner-only actions still need the token, the key stays in the request', async () => {
+  const { visitorKey, redactKey } = await import('../server/byok');
+  const store = new DemoUsageStore(null);
+  const mw = accessControlAndDemoLimit('secret', { store, limit: () => 1 });
+  const key = 'AIzaSyD-THIS_is_a_fake_key_0123456789ab';
+  const run = (method: string, path: string, k: string | undefined) => {
+    let status: number | 'next' = 'next';
+    let seen: string | null = null;
+    const req: any = { method, path, ip: '203.0.113.9', socket: {}, header: (h: string) => (h === 'x-gemini-api-key' ? k : undefined) };
+    const res: any = { setHeader() {}, status(c: number) { status = c; return this; }, json() { return this; } };
+    mw(req, res, () => {
+      seen = visitorKey();
+    });
+    return { status, seen };
+  };
+  for (let i = 0; i < 5; i++) assert.deepEqual(run('POST', '/knowledge/chat', key), { status: 'next', seen: key });
+  assert.equal(store.get('203.0.113.9'), 0); // nothing counted
+  assert.equal(run('POST', '/crypto/watermark-and-bind', key).status, 401); // still owner-only
+  assert.equal(visitorKey(), null); // gone once the request is handled
+  // Not a key: ignored, so the demo allowance applies (1, then refused).
+  assert.equal(run('POST', '/knowledge/chat', 'not a key!').status, 'next');
+  assert.equal(run('POST', '/knowledge/chat', 'not a key!').status, 429);
+  // Error text never carries the key.
+  const { runWithVisitorKey } = await import('../server/byok');
+  assert.equal(runWithVisitorKey(key, () => redactKey(`bad key ${key} refused`)), 'bad key [your key] refused');
+});

@@ -123,7 +123,7 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               onClick={onOpenDemoModal}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-mono transition-all ${
-                demoStatus.isAuthorized
+                demoStatus.isAuthorized || demoStatus.usingOwnKey
                   ? 'border-emerald-800/60 bg-emerald-950/30 text-emerald-300 hover:bg-emerald-950/50'
                   : demoStatus.demoExceeded
                   ? 'border-rose-800/80 bg-rose-950/50 text-rose-300 animate-pulse hover:bg-rose-950/70'
@@ -141,7 +141,9 @@ export const Header: React.FC<HeaderProps> = ({
                 }`}
               />
               <span>
-                {demoStatus.isAuthorized
+                {demoStatus.usingOwnKey
+                  ? 'Your own key'
+                  : demoStatus.isAuthorized
                   ? 'Host Access'
                   : demoStatus.demoExceeded
                   ? 'Demo Limit Reached'

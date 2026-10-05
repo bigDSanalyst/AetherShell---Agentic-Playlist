@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import type { NextFunction, Request, Response } from 'express';
+import { readVisitorKey, runWithVisitorKey } from './byok';
 
 // A positive integer setting; 0, negative or unparsable falls back (as before:
 // RATE_LIMIT_MAX=0 must not mean "refuse every request").
@@ -38,7 +39,7 @@ export const AI_QUOTA_PREFIXES = [
 
 // POSTs a visitor without the token may make besides the AI calls above:
 // they read or combine what is already there and change nothing.
-export const VISITOR_POSTS = ['/api/transcripts/collection', '/api/auth/verify-token'];
+export const VISITOR_POSTS = ['/api/transcripts/collection', '/api/auth/verify-token', '/api/auth/check-own-key'];
 
 // Everything else that changes state or uses the server's signing key needs the
 // owner's token when one is set: signing (watermark-and-bind), archive import,
@@ -156,9 +157,22 @@ export function cleanIp(req: Request): string {
 //       (default 3; 0 means none), then DEMO_LIMIT_EXCEEDED;
 //     everything else (signing, imports, charter, owner answers) needs the
 //       token: ACCESS_TOKEN_REQUIRED.
+// - A request carrying the visitor's own Gemini key (x-gemini-api-key, see
+//   server/byok.ts) runs its Gemini calls on that key: its AI calls are not
+//   counted against the demo allowance. Owner-only actions still need the token.
 export function accessControlAndDemoLimit(token: string | undefined, opts: { store?: DemoUsageStore; limit?: () => number } = {}) {
   const store = opts.store ?? demoStore;
   const limitOf = opts.limit ?? (() => envIntOrZero('DEMO_LIMIT_PER_IP', 3));
+  const check = accessCheck(token, store, limitOf);
+  return (req: Request, res: Response, next: NextFunction) => {
+    const key = readVisitorKey(req);
+    (req as any).usingOwnKey = !!key;
+    if (!key) return check(req, res, next);
+    runWithVisitorKey(key, () => check(req, res, next));
+  };
+}
+
+function accessCheck(token: string | undefined, store: DemoUsageStore, limitOf: () => number) {
   return (req: Request, res: Response, next: NextFunction) => {
     if (!token) {
       (req as any).isAuthorized = true;
@@ -181,6 +195,9 @@ export function accessControlAndDemoLimit(token: string | undefined, opts: { sto
       });
     }
 
+    // The visitor pays for this call with their own key.
+    if ((req as any).usingOwnKey) return next();
+
     const ip = cleanIp(req);
     const demoLimit = limitOf();
     const used = store.get(ip);
@@ -194,7 +211,7 @@ export function accessControlAndDemoLimit(token: string | undefined, opts: { sto
         demoUsed: used,
         demoRemaining: 0,
         message:
-          'You have reached the demo query limit on this shared instance. To continue with unlimited queries using your own free Gemini API key, deploy your own copy of AetherShell on Google AI Studio, or enter the host access token.',
+          'You have reached the demo query limit on this shared instance. To continue, use your own free Gemini API key here, deploy your own copy of AetherShell on Google AI Studio, or enter the host access token.',
       });
     }
     const newCount = store.record(ip);
