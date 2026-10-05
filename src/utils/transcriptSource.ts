@@ -30,6 +30,8 @@ function baseLabel(
         className: 'text-violet-300',
       };
     }
+    case 'notebook':
+      return { text: `Notebook · ${v.transcriptMethod?.via ?? 'imported'}`, short: 'notebook', detail: `A Jupyter / Colab notebook (${v.transcriptMethod?.via ?? 'imported'})${at}: its text, code and printed outputs, one segment per cell. Nothing in it was run.`, className: 'text-sky-300' };
     case 'owner-provided':
       return { text: 'Owner-provided (pasted)', short: 'pasted', detail: `Pasted by the owner${at}`, className: 'text-amber-300' };
     default:

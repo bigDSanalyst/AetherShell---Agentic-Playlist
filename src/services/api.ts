@@ -178,6 +178,68 @@ export async function fetchVideoTranscriptFor(params: {
   return res.json();
 }
 
+// A Jupyter / Colab notebook as a source: an uploaded .ipynb, or a Colab,
+// Google Drive ("Anyone with the link") or GitHub link.
+export async function importNotebook(params: { content?: string; filename?: string; url?: string }): Promise<{
+  playlist: PlaylistData;
+  source: string;
+  leftOut?: { images: number; html: number };
+}> {
+  const res = await apiFetch('/api/notebooks/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Failed to import the notebook');
+  return data;
+}
+
+// Links that are notebooks rather than YouTube videos or playlists.
+export function isNotebookLink(url: string): boolean {
+  return /colab\.research\.google\.com\/|drive\.google\.com\/|\.ipynb(\?|#|$)/i.test(url.trim());
+}
+
+// Builds a .ipynb from work done here and saves it (open it in Colab with
+// File → Upload notebook).
+export async function exportNotebook(params: {
+  title: string;
+  sources: VideoNode[];
+  logic?: unknown;
+  boundVideo?: VideoNode | null;
+  knowledge?: unknown;
+  demo?: boolean;
+}): Promise<{ filename: string; signedCheck: string }> {
+  const res = await apiFetch('/api/notebooks/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title: params.title,
+      sources: params.sources.map((v) => ({
+        title: v.title,
+        url: v.url,
+        kind: v.kind,
+        transcriptSource: v.transcriptSource,
+        transcriptMethod: v.transcriptMethod,
+        rawTranscript: v.rawTranscript || '',
+        isDemo: !!params.demo,
+      })),
+      logic: params.logic,
+      boundVideo: params.boundVideo ? { rawTranscript: params.boundVideo.rawTranscript, watermark: params.boundVideo.watermark } : undefined,
+      knowledge: params.knowledge,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Failed to build the notebook');
+  const url = URL.createObjectURL(new Blob([JSON.stringify(data.notebook, null, 1)], { type: 'application/x-ipynb+json' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = data.filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  return { filename: data.filename, signedCheck: data.signedCheck };
+}
+
 export interface LibraryEntry {
   videoId: string;
   title: string;

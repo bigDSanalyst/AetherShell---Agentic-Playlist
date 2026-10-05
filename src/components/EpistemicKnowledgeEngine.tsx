@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ClaimCheckPanel } from './ClaimCheckPanel';
+import { ExportNotebookButton } from './ExportNotebookButton';
 import {
   Brain,
   Sparkles,
@@ -435,6 +436,7 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
                     <Workflow className="w-3.5 h-3.5 text-cyan-400" />
                     <span>Inject Into Innershell SSI</span>
                   </button>
+                  <ExportNotebookButton title={`${playlist?.title || 'AetherShell'} - ${knowledge.title || 'knowledge'}`} sources={playlist?.videos || []} knowledge={knowledge} demo={!!playlist?.isDemo} />
                 </div>
 
                 <h3 className="text-base font-bold text-slate-100 font-sans leading-tight">

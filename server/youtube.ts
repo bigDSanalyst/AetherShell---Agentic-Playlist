@@ -21,13 +21,14 @@ export interface IngestedVideo {
   segments: TranscriptSegment[];
   rawTranscript: string;
   // How the transcript was obtained (server/transcribe.ts). Never 'youtube-captions' unless it was.
-  transcriptSource: 'youtube-captions' | 'model-transcription' | 'owner-provided' | 'unavailable';
+  transcriptSource: 'youtube-captions' | 'model-transcription' | 'owner-provided' | 'notebook' | 'unavailable';
   transcriptMethod?: { model?: string; via: string; at: string };
   transcriptLanguage?: string;
   transcriptError?: string;
   transcriptRefusal?: YouTubeRefusalKind; // set when YouTube refused the server rather than the video lacking captions
   uploadDate?: string; // ISO 8601, only when the YouTube Data API provided it
   fromArchive?: boolean; // read from this server's transcript archive, not fetched now
+  kind?: 'video' | 'notebook'; // a notebook's youtubeId is its notebook id (nb-…)
 }
 
 export type ParsedYouTubeUrl = { kind: 'video'; videoId: string } | { kind: 'playlist'; playlistId: string };

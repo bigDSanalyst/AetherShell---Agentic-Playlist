@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import type { IngestedVideo, TranscriptSegment } from './youtube';
+import { NOTEBOOK_ID_RE, isSourceId } from './notebook';
 
 // Every transcript this server has produced, kept so a video is transcribed
 // once. Re-ingesting a playlist reads it from here: no YouTube request, no model
@@ -15,7 +16,8 @@ export interface ArchivedTranscript {
   title: string;
   channel?: string;
   duration?: string;
-  source: 'youtube-captions' | 'model-transcription' | 'owner-provided';
+  url?: string; // notebooks: where it came from (videos rebuild theirs from the id)
+  source: 'youtube-captions' | 'model-transcription' | 'owner-provided' | 'notebook';
   model: string | null;
   via: string;
   at: string;
@@ -27,7 +29,7 @@ export interface ArchivedTranscript {
 }
 
 export const ARCHIVE_FILE_FORMAT = 'aethershell-transcripts/v1';
-const SOURCES = ['youtube-captions', 'model-transcription', 'owner-provided'];
+const SOURCES = ['youtube-captions', 'model-transcription', 'owner-provided', 'notebook'];
 const MAX_TRANSCRIPT_CHARS = 2_000_000;
 
 export interface ImportResult {
@@ -98,6 +100,7 @@ export class TranscriptArchive {
       title: v.title,
       ...(v.channel ? { channel: v.channel } : {}),
       ...(v.duration ? { duration: v.duration } : {}),
+      ...(v.kind === 'notebook' && v.url ? { url: v.url } : {}),
       source: v.transcriptSource,
       model: v.transcriptMethod?.model ?? null,
       via: v.transcriptMethod?.via ?? 'youtube caption track',
@@ -137,8 +140,8 @@ export class TranscriptArchive {
       const n = i + 1;
       const videoId = typeof e?.videoId === 'string' ? e.videoId : null;
       const why =
-        !videoId || !/^[A-Za-z0-9_-]{11}$/.test(videoId)
-          ? 'no valid 11-character video id'
+        !isSourceId(videoId)
+          ? 'no valid video or notebook id'
           : !SOURCES.includes(e.source)
           ? `unknown source "${String(e.source)}"`
           : typeof e.rawTranscript !== 'string' || !e.rawTranscript || e.rawTranscript.length > MAX_TRANSCRIPT_CHARS
@@ -210,6 +213,7 @@ export class TranscriptArchive {
       transcriptError: undefined,
       transcriptRefusal: undefined,
       fromArchive: true,
+      ...(NOTEBOOK_ID_RE.test(e.videoId) ? { kind: 'notebook' as const, url: e.url ?? '' } : {}),
     };
   }
 }

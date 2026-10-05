@@ -1,3 +1,4 @@
+import { ExportNotebookButton } from './ExportNotebookButton';
 import React, { useState } from 'react';
 import {
   Cpu,
@@ -43,6 +44,7 @@ interface InnerShellBodyProps {
   onProceedToCrypto: () => void;
   lastExecutionResult: ScriptExecutionResult | null;
   setLastExecutionResult: (result: ScriptExecutionResult | null) => void;
+  sources?: VideoNode[]; // the loaded set, exported with the plan
 }
 
 export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
@@ -56,6 +58,7 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
   onProceedToCrypto,
   lastExecutionResult,
   setLastExecutionResult,
+  sources = [],
 }) => {
   const [rclIterations, setRclIterations] = useState(3);
   // Let AetherTwin choose the pass count from the guards' past verdicts.
@@ -592,9 +595,18 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
             {/* Innershell Workflow Plan */}
             {innershellLogic && (
               <div className="p-3.5 rounded-xl bg-slate-950/60 border border-slate-800 space-y-2">
-                <span className="text-[11px] font-mono text-slate-400">
-                  Synthesized Workflow Plan ({innershellLogic.workflowSteps.length} steps):
-                </span>
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <span className="text-[11px] font-mono text-slate-400">
+                    Synthesized Workflow Plan ({innershellLogic.workflowSteps.length} steps):
+                  </span>
+                  {/* The signed plan when there is one (so the notebook can check its signature), else the current plan. */}
+                  <ExportNotebookButton
+                    title={`${activeVideo?.title || 'AetherShell'} - plan`}
+                    sources={sources.length ? sources : activeVideo ? [activeVideo] : []}
+                    logic={activeVideo?.watermark && activeVideo.boundLogic ? activeVideo.boundLogic : innershellLogic}
+                    boundVideo={activeVideo?.watermark && activeVideo.boundLogic ? activeVideo : null}
+                  />
+                </div>
                 <div className="space-y-1.5">
                   {innershellLogic.workflowSteps.map((ws) => (
                     <div
