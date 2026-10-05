@@ -55,7 +55,7 @@ import { TranscriptArchive, retryDelaySeconds } from './server/transcriptArchive
 import { buildCorpus, collectionId } from './server/corpus';
 import { checkChatAnswer } from './server/claimCheck';
 import { LatencyStats, transcriptBlock } from './server/latency';
-import { envFloat, envInt, rateLimit, requireAccessToken, demoStore, validateAccessToken } from './server/http';
+import { cleanIp, envFloat, envInt, envIntOrZero, rateLimit, requireAccessToken, demoStore, validateAccessToken } from './server/http';
 
 dotenv.config();
 
@@ -790,10 +790,9 @@ async function startServer() {
 
   // Auth and demo limit status for public visitors vs token holders
   app.get('/api/auth/demo-status', (req: Request, res: Response) => {
-    const rawIp = req.ip || req.socket.remoteAddress || 'unknown';
-    const ip = rawIp.replace(/^::ffff:/, '').trim();
+    const ip = cleanIp(req);
     const isOwner = Boolean((req as any).isAuthorized);
-    const demoLimit = envInt('DEMO_LIMIT_PER_IP', 3);
+    const demoLimit = envIntOrZero('DEMO_LIMIT_PER_IP', 3);
     const used = demoStore.get(ip);
     res.json({
       isAuthorized: isOwner,
@@ -802,7 +801,7 @@ async function startServer() {
       demoLimit,
       demoUsed: used,
       demoRemaining: isOwner ? null : Math.max(0, demoLimit - used),
-      demoExceeded: !isOwner && demoLimit > 0 && used >= demoLimit,
+      demoExceeded: !isOwner && used >= demoLimit,
     });
   });
 
