@@ -17,6 +17,7 @@ and check the logic against the transcript before it is accepted
 | Visitors and keys | Without `AETHERSHELL_ACCESS_TOKEN` the server is the owner's own: everything open. With it, visitors without the token can browse and make `DEMO_LIMIT_PER_IP` AI calls (default 3; 0 = none); signing, imports and settings need the token. A visitor can instead **use their own Gemini API key** (pasted in the demo panel, kept in their browser, sent as `x-gemini-api-key`): their Gemini calls then run on their quota, uncounted. The key is used for that request only, never stored or logged, and removed from error text; only Gemini models run on it, and guard reviewers named in the charter are never swapped for others (a non-Gemini reviewer cannot run, so that review fails closed). |
 | Notebooks in | A Jupyter / Google Colab notebook (.ipynb) is a source next to videos: upload the file, or paste a Colab, Google Drive (shared as "Anyone with the link") or GitHub link. It becomes one segment per cell (text, code and printed output), cited as `[Video N @ cell K]`, labelled `notebook`, archived, combinable with videos and signed like transcripts. Nothing in it is run; HTML/JavaScript and image outputs are left out and counted. Private Drive notebooks need downloading first (Colab has no API for other apps). |
 | Notebooks out | **Export to Colab** (Innershell plan, knowledge synthesis) saves a .ipynb: the sources as data, the plan or synthesis (labelled model-written), a scaffold from the plan's steps (no model-written code; the model's JavaScript is included as text only), and, when the plan was signed, a Python cell that checks the Ed25519 signature and that the transcript and plan are exactly what was signed. Open it in Colab with File → Upload notebook. |
+| Your own playlists | **Sign in with Google to pick your playlists** (when `GOOGLE_OAUTH_CLIENT_ID` is set) lists your playlists, including private ones and Liked videos, with read-only access (`youtube.readonly`). The sign-in happens in your browser and the token stays there, in memory, for about an hour; only the chosen video ids go to the server, which ingests them like any playlist. Watch Later and History are not available through YouTube's API. Gemini can only transcribe public videos. |
 | Demo playlists | The two built-in playlists are **synthetic sample text** with placeholder video ids, labelled `[DEMO]` everywhere. |
 | RCL/SSI | N real Gemini passes (1–5). Pass 1 drafts the logic; later passes revise it against the transcript. The per-pass numbers are **measured**: content-word overlap with the transcript and change from the previous pass. |
 | Signing | Ed25519 signature (server-held key) over a manifest of SHA-256(transcript) and SHA-256(canonical logic JSON), made **before** DEFLATE compression. Public key at `GET /api/crypto/public-key`. |
@@ -98,6 +99,17 @@ Things that affect accuracy:
   model reviewed each verdict (`reviewModel`).
 - **A model that answers with invalid JSON is skipped** and the next model is
   tried; if none gives usable JSON the call fails closed.
+
+## Picking from your own YouTube playlists (Google sign-in)
+
+One-time setup in Google Cloud (free):
+
+1. Create a project at console.cloud.google.com and enable **YouTube Data API v3**.
+2. **OAuth consent screen**: type External, publishing status **Testing**, add yourself as a test user, and add the scope `.../auth/youtube.readonly`.
+3. **Credentials → Create credentials → OAuth client ID**, type **Web application**. Under **Authorized JavaScript origins** add every address the app is opened at, e.g. `http://localhost:3000` and your deployed app's address (scheme and host only, no path).
+4. Set `GOOGLE_OAUTH_CLIENT_ID` to the client ID (it ends in `.apps.googleusercontent.com`). It is not a secret; do not put the client secret anywhere, it is not used.
+
+While the consent screen is in Testing, only the test users you added can sign in. The app asks for read-only access; the sign-in stays in the browser and is never sent to the server.
 
 ## Proving when: Bitcoin-anchored timestamps
 

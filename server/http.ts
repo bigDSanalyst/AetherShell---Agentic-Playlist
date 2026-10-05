@@ -33,6 +33,7 @@ export const AI_QUOTA_PREFIXES = [
   '/api/audio/transcribe-mic',
   '/api/youtube/transcribe',
   '/api/youtube/fetch-playlist', // transcribes with Gemini when YouTube refuses
+  '/api/youtube/ingest-videos', // videos picked from the owner's account; same transcription path
   '/api/guard/github-execute',
   '/api/exchange/system-answer',
 ];

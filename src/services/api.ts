@@ -178,6 +178,30 @@ export async function fetchVideoTranscriptFor(params: {
   return res.json();
 }
 
+// The Google sign-in client id for the YouTube playlist picker (null: not set up).
+export async function fetchGoogleClientId(): Promise<string | null> {
+  const res = await apiFetch('/api/config/google-client');
+  if (!res.ok) return null;
+  return (await res.json()).clientId ?? null;
+}
+
+// Videos picked from the owner's own YouTube account (only ids and titles are sent).
+export async function ingestPickedVideos(params: {
+  playlistId?: string;
+  title: string;
+  items: { videoId: string; title?: string; channel?: string }[];
+  modelFallback?: boolean;
+}): Promise<Awaited<ReturnType<typeof fetchPlaylistData>>> {
+  const res = await apiFetch('/api/youtube/ingest-videos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Failed to ingest the picked videos');
+  return data;
+}
+
 // A Jupyter / Colab notebook as a source: an uploaded .ipynb, or a Colab,
 // Google Drive ("Anyone with the link") or GitHub link.
 export async function importNotebook(params: { content?: string; filename?: string; url?: string }): Promise<{
