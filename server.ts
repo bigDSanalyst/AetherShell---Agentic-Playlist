@@ -54,8 +54,9 @@ import { diagnose } from './server/doctor';
 import { TranscriptArchive, retryDelaySeconds } from './server/transcriptArchive';
 import { buildCorpus, collectionId } from './server/corpus';
 import { checkChatAnswer } from './server/claimCheck';
+import { redactKey, visitorKey } from './server/byok';
 import { LatencyStats, transcriptBlock } from './server/latency';
-import { envFloat, envInt, rateLimit, requireAccessToken, demoStore, validateAccessToken } from './server/http';
+import { cleanIp, envFloat, envInt, envIntOrZero, rateLimit, requireAccessToken, demoStore, validateAccessToken } from './server/http';
 
 dotenv.config();
 
@@ -65,6 +66,23 @@ const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || '',
   httpOptions: { headers: { 'User-Agent': 'aistudio-build' } },
 });
+
+// The Gemini client for the request being handled: the visitor's own key when
+// they brought one (server/byok.ts), else the host's.
+function geminiClient(): GoogleGenAI {
+  const key = visitorKey();
+  return key ? new GoogleGenAI({ apiKey: key, httpOptions: { headers: { 'User-Agent': 'aistudio-build' } } }) : ai;
+}
+
+// With a visitor's key only Gemini models can run (the visitor cannot pay for the
+// host's other providers). An explicit list (the charter's guard reviewers) is
+// filtered, never replaced: if none of its models is Gemini, the review cannot
+// run and fails closed. The cascade falls back to Gemini Flash.
+function modelsForRequest(models: string[], explicit: boolean): string[] {
+  if (!visitorKey()) return models;
+  const gemini = models.filter((ref) => parseModelRef(ref).provider === 'gemini');
+  return gemini.length || explicit ? gemini : ['gemini-flash-latest'];
+}
 
 const signingKeys = loadSigningKeys();
 
@@ -250,6 +268,7 @@ function learningReport(playlistKey?: string) {
 
 // Models that can write right now: configured provider, daily quota not reported used up.
 function callableWriters(): string[] {
+  if (visitorKey()) return modelsForRequest(MODEL_CASCADE, false);
   return MODEL_CASCADE.filter((ref) => PROVIDER_CONFIG[parseModelRef(ref).provider] && !geminiUsage.dailyQuotaReached(ref));
 }
 
@@ -311,7 +330,7 @@ const dailyLimitFor = (ref: string) => (parseModelRef(ref).provider === 'gemini'
 
 class LlmUnavailableError extends Error {
   constructor(cause: unknown) {
-    super(`Language model unavailable: ${(cause as any)?.message || String(cause)}`);
+    super(redactKey(`Language model unavailable: ${(cause as any)?.message || String(cause)}`));
   }
 }
 
@@ -328,17 +347,19 @@ async function callModel(options: {
   // Only models from the configured cascade may be requested by the client.
   // An explicit list (the charter's guard reviewers) replaces the cascade.
   const preferred = options.preferredModel && MODEL_CASCADE.includes(options.preferredModel) ? options.preferredModel : null;
-  const models = options.models ?? (preferred ? [preferred, ...MODEL_CASCADE.filter((m) => m !== preferred)] : MODEL_CASCADE);
-  let lastError: unknown = new Error('No models configured');
+  const models = modelsForRequest(options.models ?? (preferred ? [preferred, ...MODEL_CASCADE.filter((m) => m !== preferred)] : MODEL_CASCADE), !!options.models);
+  // A visitor's own key: their quota, so the host's usage counters are left alone.
+  const own = !!visitorKey();
+  let lastError: unknown = new Error(own ? 'None of the models for this step is a Gemini model; your own key can only run Gemini' : 'No models configured');
   for (const ref of models) {
     const m = parseModelRef(ref);
-    const cfg = PROVIDER_CONFIG[m.provider];
+    const cfg = own && m.provider === 'gemini' ? { kind: 'gemini' as const } : PROVIDER_CONFIG[m.provider];
     if (!cfg) {
       lastError = new Error(`${ref}: provider "${m.provider}" is not configured on this server`);
       continue;
     }
     // The provider already said this model's daily quota is used up: a call would only be refused.
-    if (geminiUsage.dailyQuotaReached(ref)) {
+    if (!own && geminiUsage.dailyQuotaReached(ref)) {
       geminiUsage.record(ref, 'skipped');
       continue;
     }
@@ -346,23 +367,23 @@ async function callModel(options: {
     try {
       const text =
         cfg.kind === 'gemini'
-          ? (await ai.models.generateContent({ model: m.model, contents: options.contents, config: options.config })).text
-          : await openAICompatibleGenerate(cfg, m.model, {
+          ? (await geminiClient().models.generateContent({ model: m.model, contents: options.contents, config: options.config })).text
+          : await openAICompatibleGenerate(cfg as any, m.model, {
               messages: toChatMessages(options.contents, options.config?.systemInstruction),
               json: options.config?.responseMimeType === 'application/json',
             });
-      geminiUsage.record(ref, 'ok');
+      if (!own) geminiUsage.record(ref, 'ok');
       latency.record(options.taskName, ref, Date.now() - t0);
       if (text && (!options.accept || options.accept(text))) return { text, modelUsed: ref };
       lastError = new Error(text ? `${ref} returned an unusable answer (invalid JSON)` : `Empty response from ${ref}`);
       if (text) console.warn(`[model] ${options.taskName}: ${ref} returned invalid JSON; trying the next model`);
     } catch (err: any) {
       lastError = err;
-      geminiUsage.record(ref, classifyGeminiError(err), err);
-      console.warn(`[model] ${options.taskName} failed on ${ref}: ${String(err?.message || err).slice(0, 160)}`);
+      if (!own) geminiUsage.record(ref, classifyGeminiError(err), err);
+      console.warn(`[model] ${options.taskName} failed on ${ref}${own ? ' (visitor key)' : ''}: ${redactKey(String(err?.message || err)).slice(0, 160)}`);
     }
   }
-  if (models.length && models.every((m) => geminiUsage.dailyQuotaReached(m))) {
+  if (!own && models.length && models.every((m) => geminiUsage.dailyQuotaReached(m))) {
     lastError = new Error(
       `The provider reports the daily quota is used up for ${models.length === 1 ? models[0] : `all ${models.length} models`}; ` +
         `Gemini's resets at midnight Pacific, in about ${formatDuration(secondsUntilReset(new Date()))}`
@@ -380,16 +401,17 @@ async function callModelStream(
   onDelta: (text: string) => void
 ) {
   const preferred = options.preferredModel && MODEL_CASCADE.includes(options.preferredModel) ? options.preferredModel : null;
-  const models = preferred ? [preferred, ...MODEL_CASCADE.filter((m) => m !== preferred)] : MODEL_CASCADE;
+  const models = modelsForRequest(preferred ? [preferred, ...MODEL_CASCADE.filter((m) => m !== preferred)] : MODEL_CASCADE, false);
+  const own = !!visitorKey();
   let lastError: unknown = new Error('No models configured');
   for (const ref of models) {
     const m = parseModelRef(ref);
-    const cfg = PROVIDER_CONFIG[m.provider];
+    const cfg = own && m.provider === 'gemini' ? { kind: 'gemini' as const } : PROVIDER_CONFIG[m.provider];
     if (!cfg) {
       lastError = new Error(`${ref}: provider "${m.provider}" is not configured on this server`);
       continue;
     }
-    if (geminiUsage.dailyQuotaReached(ref)) {
+    if (!own && geminiUsage.dailyQuotaReached(ref)) {
       geminiUsage.record(ref, 'skipped');
       continue;
     }
@@ -398,7 +420,7 @@ async function callModelStream(
     let text = '';
     try {
       if (cfg.kind === 'gemini') {
-        const stream = await ai.models.generateContentStream({ model: m.model, contents: options.contents, config: options.config });
+        const stream = await geminiClient().models.generateContentStream({ model: m.model, contents: options.contents, config: options.config });
         for await (const chunk of stream) {
           const piece = chunk.text || '';
           if (!piece) continue;
@@ -407,18 +429,18 @@ async function callModelStream(
           onDelta(piece);
         }
       } else {
-        text = await openAICompatibleGenerate(cfg, m.model, { messages: toChatMessages(options.contents, options.config?.systemInstruction), json: false });
+        text = await openAICompatibleGenerate(cfg as any, m.model, { messages: toChatMessages(options.contents, options.config?.systemInstruction), json: false });
         firstTokenMs = Date.now() - t0;
         if (text) onDelta(text);
       }
-      geminiUsage.record(ref, 'ok');
+      if (!own) geminiUsage.record(ref, 'ok');
       latency.record(options.taskName, ref, Date.now() - t0, firstTokenMs);
       if (text) return { text, modelUsed: ref };
       lastError = new Error(`Empty response from ${ref}`);
     } catch (err: any) {
-      geminiUsage.record(ref, classifyGeminiError(err), err);
-      console.warn(`[model] ${options.taskName} failed on ${ref}: ${String(err?.message || err).slice(0, 160)}`);
-      if (text) throw Object.assign(new Error(`${ref} stopped mid-answer: ${err?.message || err}`), { partial: true });
+      if (!own) geminiUsage.record(ref, classifyGeminiError(err), err);
+      console.warn(`[model] ${options.taskName} failed on ${ref}${own ? ' (visitor key)' : ''}: ${redactKey(String(err?.message || err)).slice(0, 160)}`);
+      if (text) throw Object.assign(new Error(redactKey(`${ref} stopped mid-answer: ${err?.message || err}`)), { partial: true });
       lastError = err;
     }
   }
@@ -441,7 +463,7 @@ function sendError(res: Response, err: any, fallbackMessage: string) {
   if (err instanceof LlmUnavailableError) {
     return res.status(503).json({ error: err.message, code: 'LLM_UNAVAILABLE' });
   }
-  return res.status(500).json({ error: err?.message || fallbackMessage });
+  return res.status(500).json({ error: redactKey(String(err?.message || fallbackMessage)) });
 }
 
 function normalizeForQuote(text: string): string {
@@ -790,10 +812,9 @@ async function startServer() {
 
   // Auth and demo limit status for public visitors vs token holders
   app.get('/api/auth/demo-status', (req: Request, res: Response) => {
-    const rawIp = req.ip || req.socket.remoteAddress || 'unknown';
-    const ip = rawIp.replace(/^::ffff:/, '').trim();
+    const ip = cleanIp(req);
     const isOwner = Boolean((req as any).isAuthorized);
-    const demoLimit = envInt('DEMO_LIMIT_PER_IP', 3);
+    const demoLimit = envIntOrZero('DEMO_LIMIT_PER_IP', 3);
     const used = demoStore.get(ip);
     res.json({
       isAuthorized: isOwner,
@@ -802,7 +823,8 @@ async function startServer() {
       demoLimit,
       demoUsed: used,
       demoRemaining: isOwner ? null : Math.max(0, demoLimit - used),
-      demoExceeded: !isOwner && demoLimit > 0 && used >= demoLimit,
+      demoExceeded: !isOwner && used >= demoLimit,
+      usingOwnKey: Boolean((req as any).usingOwnKey),
     });
   });
 
@@ -817,6 +839,24 @@ async function startServer() {
       return res.status(401).json({ valid: false, error: 'Invalid access token' });
     }
     res.json({ valid: true, note: 'Access token verified' });
+  });
+
+  // Checks a visitor's own Gemini key with a token count (no generation, no
+  // quota of the host's). The key is never stored or logged.
+  app.post('/api/auth/check-own-key', async (req: Request, res: Response) => {
+    if (!visitorKey()) return res.status(400).json({ valid: false, error: 'No key sent, or it does not look like a Google API key.' });
+    try {
+      await geminiClient().models.countTokens({ model: 'gemini-flash-latest', contents: 'ping' });
+      res.json({ valid: true });
+    } catch (err: any) {
+      const msg = String(err?.message || '');
+      const why = /API_KEY_INVALID|API key not valid/i.test(msg)
+        ? 'Google says this API key is not valid. Copy it again from aistudio.google.com/app/apikey.'
+        : /PERMISSION_DENIED|SERVICE_DISABLED/i.test(msg)
+        ? 'Google refused this key (the Gemini API may not be enabled for its project).'
+        : redactKey(msg || 'The key was refused').slice(0, 300);
+      res.status(400).json({ valid: false, error: why });
+    }
   });
 
   // Demo playlists (synthetic sample transcripts, clearly labelled).
@@ -887,7 +927,7 @@ async function startServer() {
   // (server/transcribe.ts). Only Gemini models take a YouTube URL as input.
   async function transcribeWithModel(v: IngestedVideo, durationSeconds?: number): Promise<IngestedVideo> {
     const models = VIDEO_TRANSCRIBE_MODELS;
-    if (!PROVIDER_CONFIG.gemini) {
+    if (!PROVIDER_CONFIG.gemini && !visitorKey()) {
       return { ...v, transcriptError: `${v.transcriptError ? v.transcriptError + ' ' : ''}Machine transcription needs a Gemini model; none is configured.` };
     }
     // A per-minute rate limit clears by itself: wait as long as the provider asks
@@ -1518,7 +1558,7 @@ ${corpus}
         }
         if (!(err instanceof LlmUnavailableError)) {
           if (streaming) {
-            send({ error: err?.message || 'Chat generation failed' });
+            send({ error: redactKey(String(err?.message || 'Chat generation failed')) });
             return res.end();
           }
           throw err;
@@ -1549,7 +1589,7 @@ ${corpus}
       res.json({ success: true, reply, modelUsed: null, degraded: true, corpusCoverage, timestamp: Date.now() });
     } catch (err: any) {
       if (res.headersSent) {
-        res.write(`data: ${JSON.stringify({ error: err?.message || 'Chat generation failed' })}\n\n`);
+        res.write(`data: ${JSON.stringify({ error: redactKey(String(err?.message || 'Chat generation failed')) })}\n\n`);
         return res.end();
       }
       sendError(res, err, 'Chat generation failed');
@@ -1565,16 +1605,16 @@ ${corpus}
       if (!/^audio\/[a-z0-9.+-]+(;.*)?$/i.test(String(mimeType))) {
         return res.status(400).json({ error: 'mimeType must be an audio type' });
       }
-      if (!PROVIDER_CONFIG.gemini) {
+      if (!PROVIDER_CONFIG.gemini && !visitorKey()) {
         return res.status(503).json({ error: 'Voice input uses Gemini audio transcription; no GEMINI_API_KEY is set on this server.' });
       }
-      const response = await ai.models.generateContent({
+      const response = await geminiClient().models.generateContent({
         model: TRANSCRIBE_MODEL,
         contents: { parts: [{ inlineData: { mimeType, data: audioBase64 } }, { text: 'Transcribe this spoken question accurately into text.' }] },
       });
       res.json({ success: true, transcription: response.text?.trim() || '' });
     } catch (err: any) {
-      res.status(503).json({ error: `Audio transcription failed: ${err?.message || 'model unavailable'}` });
+      res.status(503).json({ error: redactKey(`Audio transcription failed: ${err?.message || 'model unavailable'}`) });
     }
   });
 

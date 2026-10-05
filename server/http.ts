@@ -2,8 +2,17 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import type { NextFunction, Request, Response } from 'express';
+import { readVisitorKey, runWithVisitorKey } from './byok';
 
+// A positive integer setting; 0, negative or unparsable falls back (as before:
+// RATE_LIMIT_MAX=0 must not mean "refuse every request").
 export function envInt(name: string, fallback: number): number {
+  const v = Number.parseInt(process.env[name] || '', 10);
+  return Number.isFinite(v) && v > 0 ? v : fallback;
+}
+
+// A setting where 0 is meaningful (DEMO_LIMIT_PER_IP=0: no AI calls for visitors).
+export function envIntOrZero(name: string, fallback: number): number {
   const v = Number.parseInt(process.env[name] || '', 10);
   return Number.isFinite(v) && v >= 0 ? v : fallback;
 }
@@ -23,9 +32,28 @@ export const AI_QUOTA_PREFIXES = [
   '/api/engine/guard-validate-beta',
   '/api/audio/transcribe-mic',
   '/api/youtube/transcribe',
+  '/api/youtube/fetch-playlist', // transcribes with Gemini when YouTube refuses
   '/api/guard/github-execute',
   '/api/exchange/system-answer',
 ];
+
+// POSTs a visitor without the token may make besides the AI calls above:
+// they read or combine what is already there and change nothing.
+export const VISITOR_POSTS = ['/api/transcripts/collection', '/api/auth/verify-token', '/api/auth/check-own-key'];
+
+// Everything else that changes state or uses the server's signing key needs the
+// owner's token when one is set: signing (watermark-and-bind), archive import,
+// pasted transcripts, the charter, owner answers in the exchange, the twin, and
+// GitHub guard imports. A visitor must not be able to get arbitrary text signed
+// with this server's key or write to its ledger outside the demo AI calls.
+export function isVisitorAllowed(method: string, reqPath: string): 'ai' | 'read' | 'owner-only' {
+  const norm = reqPath.split('?')[0];
+  const withApi = norm.startsWith('/api') ? norm : `/api${norm.startsWith('/') ? '' : '/'}${norm}`;
+  if (isAiQuotaPath(withApi)) return 'ai';
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return 'read';
+  if (VISITOR_POSTS.includes(withApi)) return 'read';
+  return 'owner-only';
+}
 
 export function isAiQuotaPath(reqPath: string): boolean {
   const norm = reqPath.split('?')[0];
@@ -52,18 +80,17 @@ interface DemoEntry {
   lastSeen: string;
 }
 
-class DemoUsageStore {
-  private file: string;
+export class DemoUsageStore {
   private memory = new Map<string, DemoEntry>();
 
-  constructor() {
-    this.file = path.join(process.cwd(), 'data', 'demo-usage.json');
+  // file: where counts persist (null: memory only, e.g. in tests).
+  constructor(private file: string | null = path.join(process.cwd(), 'data', 'demo-usage.json')) {
     this.load();
   }
 
   private load() {
     try {
-      if (fs.existsSync(this.file)) {
+      if (this.file && fs.existsSync(this.file)) {
         const parsed = JSON.parse(fs.readFileSync(this.file, 'utf8'));
         if (parsed && typeof parsed === 'object') {
           for (const [k, v] of Object.entries(parsed)) {
@@ -79,6 +106,7 @@ class DemoUsageStore {
   }
 
   private save() {
+    if (!this.file) return;
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
       const obj: Record<string, DemoEntry> = {};
@@ -114,59 +142,79 @@ class DemoUsageStore {
 
 export const demoStore = new DemoUsageStore();
 
-function cleanIp(req: Request): string {
+export function cleanIp(req: Request): string {
   const raw = req.ip || req.socket.remoteAddress || 'unknown';
   return raw.replace(/^::ffff:/, '').trim();
 }
 
-// Access control + Per-IP demo limiter.
-// - If the request presents a valid AETHERSHELL_ACCESS_TOKEN, full access is granted.
-// - If no token is presented (or incorrect), non-AI requests are open so visitors can browse
-//   curated playlists, inspect transcripts, and view architecture.
-// - Quota-consuming AI calls (chat, synthesis, RCL/SSI) are allotted a one-time per-IP demo quota
-//   (DEMO_LIMIT_PER_IP, default 3). Once exhausted, a DEMO_LIMIT_EXCEEDED response is returned
-//   prompting the visitor to deploy their own free instance on Google AI Studio or provide the host token.
-export function accessControlAndDemoLimit(token: string | undefined) {
+// Access control and the per-IP demo allowance.
+// - No AETHERSHELL_ACCESS_TOKEN set: the server is the owner's own; everything is
+//   open and nothing is counted (as before; doctor warns if it is exposed).
+// - Token set and sent: full access.
+// - Token set, not sent (a visitor):
+//     reads (GET) and VISITOR_POSTS are open, so visitors can browse;
+//     AI calls (AI_QUOTA_PREFIXES) are allowed DEMO_LIMIT_PER_IP times per IP
+//       (default 3; 0 means none), then DEMO_LIMIT_EXCEEDED;
+//     everything else (signing, imports, charter, owner answers) needs the
+//       token: ACCESS_TOKEN_REQUIRED.
+// - A request carrying the visitor's own Gemini key (x-gemini-api-key, see
+//   server/byok.ts) runs its Gemini calls on that key: its AI calls are not
+//   counted against the demo allowance. Owner-only actions still need the token.
+export function accessControlAndDemoLimit(token: string | undefined, opts: { store?: DemoUsageStore; limit?: () => number } = {}) {
+  const store = opts.store ?? demoStore;
+  const limitOf = opts.limit ?? (() => envIntOrZero('DEMO_LIMIT_PER_IP', 3));
+  const check = accessCheck(token, store, limitOf);
   return (req: Request, res: Response, next: NextFunction) => {
-    const provided = req.header('x-aethershell-token');
-    const isOwner = Boolean(token && validateAccessToken(token, provided));
-    const ip = cleanIp(req);
-    const demoLimit = envInt('DEMO_LIMIT_PER_IP', 3);
-    const used = demoStore.get(ip);
+    const key = readVisitorKey(req);
+    (req as any).usingOwnKey = !!key;
+    if (!key) return check(req, res, next);
+    runWithVisitorKey(key, () => check(req, res, next));
+  };
+}
 
-    // Pass token status down for downstream handlers
+function accessCheck(token: string | undefined, store: DemoUsageStore, limitOf: () => number) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!token) {
+      (req as any).isAuthorized = true;
+      return next();
+    }
+    const isOwner = validateAccessToken(token, req.header('x-aethershell-token'));
     (req as any).isAuthorized = isOwner;
-
-    // Set demo headers for client telemetry
-    res.setHeader('X-Demo-Limit', String(demoLimit));
-    res.setHeader('X-Demo-Used', String(used));
-    res.setHeader('X-Demo-Remaining', String(Math.max(0, demoLimit - used)));
-
     if (isOwner) {
       res.setHeader('X-Aethershell-Auth', 'authorized');
       return next();
     }
 
-    // Exclude read-only or telemetry routes from the demo quota
-    if (!isAiQuotaPath(req.path)) {
-      return next();
+    const kind = isVisitorAllowed(req.method, req.path);
+    if (kind === 'read') return next();
+    if (kind === 'owner-only') {
+      return res.status(401).json({
+        error: 'This action needs the host access token',
+        code: 'ACCESS_TOKEN_REQUIRED',
+        message: 'Signing, importing and changing settings are for the owner of this instance. Enter the host access token, or deploy your own copy.',
+      });
     }
 
-    // AI Quota Path: Check IP allowance
-    if (demoLimit > 0 && used >= demoLimit) {
+    // The visitor pays for this call with their own key.
+    if ((req as any).usingOwnKey) return next();
+
+    const ip = cleanIp(req);
+    const demoLimit = limitOf();
+    const used = store.get(ip);
+    res.setHeader('X-Demo-Limit', String(demoLimit));
+    if (used >= demoLimit) {
+      res.setHeader('X-Demo-Remaining', '0');
       return res.status(429).json({
-        error: 'Demo quota limit reached for this IP',
+        error: demoLimit === 0 ? 'Demo queries are turned off on this instance' : 'Demo quota limit reached for this IP',
         code: 'DEMO_LIMIT_EXCEEDED',
         demoLimit,
         demoUsed: used,
         demoRemaining: 0,
         message:
-          'You have reached the demo query limit on this shared instance. To continue with unlimited queries using your own free Gemini API key, deploy your own copy of AetherShell on Google AI Studio, or enter the host access token.',
+          'You have reached the demo query limit on this shared instance. To continue, use your own free Gemini API key here, deploy your own copy of AetherShell on Google AI Studio, or enter the host access token.',
       });
     }
-
-    // Allowed under demo quota: record usage
-    const newCount = demoStore.record(ip);
+    const newCount = store.record(ip);
     res.setHeader('X-Demo-Used', String(newCount));
     res.setHeader('X-Demo-Remaining', String(Math.max(0, demoLimit - newCount)));
     next();
