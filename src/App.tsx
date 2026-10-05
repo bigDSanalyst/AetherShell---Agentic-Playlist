@@ -11,6 +11,7 @@ import { buildSnapshot, type ParsedSnapshot } from './utils/snapshot';
 import { EpistemicKnowledgeEngine } from './components/EpistemicKnowledgeEngine';
 import { AetherTwinParallel } from './components/AetherTwinParallel';
 import { AetherOutputHubModal } from './components/AetherOutputHubModal';
+import { DemoLimitModal } from './components/DemoLimitModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { mergeIntoSet } from './utils/collection';
 import {
@@ -39,6 +40,8 @@ import {
   validateWithGuardShellBeta,
   validateWithDualGuardShells,
   absorbRunIntoTwin,
+  fetchDemoStatus,
+  type DemoStatus,
 } from './services/api';
 import {
   AlertCircle,
@@ -115,6 +118,15 @@ export default function App() {
     } catch {}
   };
 
+  // Demo Quota and Host Access State
+  const [demoStatus, setDemoStatus] = useState<DemoStatus | null>(null);
+  const [isDemoModalOpen, setIsDemoModalOpen] = useState(false);
+  const [demoModalReason, setDemoModalReason] = useState<string | null>(null);
+
+  const refreshDemoStatus = () => {
+    fetchDemoStatus().then(setDemoStatus).catch(() => {});
+  };
+
   // Multi-Session Persistent Memory
   const [sessionMemory, setSessionMemory] = useState<PersistentSessionMemory>(() => {
     try {
@@ -171,8 +183,29 @@ export default function App() {
     setTimeout(() => setNotification(null), type === 'success' ? 4000 : 12000);
   };
 
-  // Initial Load: Fetch curated playlists and default load the first one
+  // Initial Load: Fetch curated playlists and set up demo/auth listeners
   useEffect(() => {
+    refreshDemoStatus();
+
+    const onDemoLimitExceeded = (e: any) => {
+      const msg = e.detail?.message || 'Demo query quota limit reached for this IP';
+      setDemoModalReason(msg);
+      setIsDemoModalOpen(true);
+      showToast(msg, 'error');
+      refreshDemoStatus();
+    };
+
+    const onAccessTokenRequired = (e: any) => {
+      const msg = e.detail?.message || 'Host access token is required for this operation';
+      setDemoModalReason(msg);
+      setIsDemoModalOpen(true);
+      showToast(msg, 'info');
+      refreshDemoStatus();
+    };
+
+    window.addEventListener('aethershell:demo-limit-exceeded', onDemoLimitExceeded);
+    window.addEventListener('aethershell:access-token-required', onAccessTokenRequired);
+
     const init = async () => {
       try {
         const curated = await fetchCuratedPlaylists();
@@ -192,6 +225,11 @@ export default function App() {
       }
     };
     init();
+
+    return () => {
+      window.removeEventListener('aethershell:demo-limit-exceeded', onDemoLimitExceeded);
+      window.removeEventListener('aethershell:access-token-required', onAccessTokenRequired);
+    };
   }, []);
 
   const applyIngested = async (res: Awaited<ReturnType<typeof fetchPlaylistData>>) => {
@@ -390,6 +428,7 @@ export default function App() {
       showToast(err.message || 'RCL/SSI cycle failed', 'error');
     } finally {
       setIsLoading(false);
+      refreshDemoStatus();
     }
   };
 
@@ -498,6 +537,7 @@ export default function App() {
       showToast(err.message || 'Guard Shell validation failed', 'error');
     } finally {
       setIsLoading(false);
+      refreshDemoStatus();
     }
   };
 
@@ -692,6 +732,8 @@ export default function App() {
         onOpenOutputHub={() => setIsOutputHubOpen(true)}
         hasWatermarkAndLogic={hasWatermarkAndLogic}
         lastSaved={lastSaved}
+        demoStatus={demoStatus}
+        onOpenDemoModal={() => setIsDemoModalOpen(true)}
       />
 
       {/* Main Body */}
@@ -892,6 +934,18 @@ export default function App() {
         showToast={showToast}
       />
       </ErrorBoundary>
+
+      {/* Demo Quota & Host Access Modal */}
+      <DemoLimitModal
+        isOpen={isDemoModalOpen}
+        onClose={() => {
+          setIsDemoModalOpen(false);
+          setDemoModalReason(null);
+        }}
+        demoStatus={demoStatus}
+        onStatusUpdated={refreshDemoStatus}
+        reason={demoModalReason}
+      />
 
       {/* Footer */}
       <footer className="border-t border-slate-900 bg-slate-950 py-4 text-center text-xs text-slate-500 font-mono">

@@ -14,7 +14,7 @@ import {
 
 const TOKEN_KEY = 'aethershell_access_token';
 
-function readToken(): string {
+export function readToken(): string {
   try {
     return localStorage.getItem(TOKEN_KEY) || '';
   } catch {
@@ -22,8 +22,49 @@ function readToken(): string {
   }
 }
 
-// fetch wrapper: sends the optional access token, and asks for it once if the
-// server requires one (AETHERSHELL_ACCESS_TOKEN).
+export function saveToken(token: string): void {
+  try {
+    localStorage.setItem(TOKEN_KEY, token.trim());
+  } catch {}
+}
+
+export function clearStoredAccessToken(): void {
+  try {
+    localStorage.removeItem(TOKEN_KEY);
+  } catch {}
+}
+
+export interface DemoStatus {
+  isAuthorized: boolean;
+  hasAccessTokenConfigured: boolean;
+  ip: string;
+  demoLimit: number;
+  demoUsed: number;
+  demoRemaining: number | null;
+  demoExceeded: boolean;
+}
+
+export async function fetchDemoStatus(): Promise<DemoStatus> {
+  const res = await apiFetch('/api/auth/demo-status');
+  if (!res.ok) throw new Error('Failed to fetch demo status');
+  return res.json();
+}
+
+export async function verifyAndSaveAccessToken(token: string): Promise<{ valid: boolean; error?: string }> {
+  const res = await fetch('/api/auth/verify-token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (res.ok && body.valid) {
+    saveToken(token);
+    return { valid: true };
+  }
+  return { valid: false, error: body.error || 'Invalid access token' };
+}
+
+// fetch wrapper: sends the optional access token and broadcasts auth / demo limit events
 async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
   const send = () => {
     const headers = new Headers(init.headers);
@@ -31,19 +72,20 @@ async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> 
     if (token) headers.set('x-aethershell-token', token);
     return fetch(url, { ...init, headers });
   };
-  let res = await send();
-  if (res.status === 401) {
+  const res = await send();
+
+  if (res.status === 429) {
+    const body = await res.clone().json().catch(() => ({}));
+    if (body.code === 'DEMO_LIMIT_EXCEEDED' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('aethershell:demo-limit-exceeded', { detail: body }));
+    }
+  } else if (res.status === 401) {
     const body = await res.clone().json().catch(() => ({}));
     if (body.code === 'ACCESS_TOKEN_REQUIRED' && typeof window !== 'undefined') {
-      const entered = window.prompt('This AetherShell server requires an access token:');
-      if (entered) {
-        try {
-          localStorage.setItem(TOKEN_KEY, entered.trim());
-        } catch {}
-        res = await send();
-      }
+      window.dispatchEvent(new CustomEvent('aethershell:access-token-required', { detail: body }));
     }
   }
+
   return res;
 }
 

@@ -55,7 +55,7 @@ import { TranscriptArchive, retryDelaySeconds } from './server/transcriptArchive
 import { buildCorpus, collectionId } from './server/corpus';
 import { checkChatAnswer } from './server/claimCheck';
 import { LatencyStats, transcriptBlock } from './server/latency';
-import { envFloat, envInt, rateLimit, requireAccessToken } from './server/http';
+import { envFloat, envInt, rateLimit, requireAccessToken, demoStore, validateAccessToken } from './server/http';
 
 dotenv.config();
 
@@ -786,6 +786,37 @@ async function startServer() {
       fingerprint: signingKeys.fingerprint,
       ephemeral: signingKeys.ephemeral,
     });
+  });
+
+  // Auth and demo limit status for public visitors vs token holders
+  app.get('/api/auth/demo-status', (req: Request, res: Response) => {
+    const rawIp = req.ip || req.socket.remoteAddress || 'unknown';
+    const ip = rawIp.replace(/^::ffff:/, '').trim();
+    const isOwner = Boolean((req as any).isAuthorized);
+    const demoLimit = envInt('DEMO_LIMIT_PER_IP', 3);
+    const used = demoStore.get(ip);
+    res.json({
+      isAuthorized: isOwner,
+      hasAccessTokenConfigured: Boolean(process.env.AETHERSHELL_ACCESS_TOKEN),
+      ip,
+      demoLimit,
+      demoUsed: used,
+      demoRemaining: isOwner ? null : Math.max(0, demoLimit - used),
+      demoExceeded: !isOwner && demoLimit > 0 && used >= demoLimit,
+    });
+  });
+
+  app.post('/api/auth/verify-token', (req: Request, res: Response) => {
+    const { token } = req.body || {};
+    const configured = process.env.AETHERSHELL_ACCESS_TOKEN;
+    if (!configured) {
+      return res.json({ valid: true, note: 'No access token configured on host; access is open' });
+    }
+    const valid = validateAccessToken(configured, token);
+    if (!valid) {
+      return res.status(401).json({ valid: false, error: 'Invalid access token' });
+    }
+    res.json({ valid: true, note: 'Access token verified' });
   });
 
   // Demo playlists (synthetic sample transcripts, clearly labelled).

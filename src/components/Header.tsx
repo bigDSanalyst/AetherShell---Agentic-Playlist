@@ -11,8 +11,10 @@ import {
   Terminal,
   Brain,
   GitBranch,
+  KeyRound,
 } from 'lucide-react';
 import { PersistentSessionMemory } from '../types';
+import { DemoStatus } from '../services/api';
 
 interface HeaderProps {
   activeTab: 'pipeline' | 'knowledge' | 'innershell' | 'crypto' | 'guard' | 'twin' | 'memory';
@@ -25,6 +27,8 @@ interface HeaderProps {
   hasWatermarkAndLogic: boolean;
   // When session memory was last written to this browser's storage (or why it failed).
   lastSaved: { at: number } | { error: string } | null;
+  demoStatus?: DemoStatus | null;
+  onOpenDemoModal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -37,6 +41,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenOutputHub,
   hasWatermarkAndLogic,
   lastSaved,
+  demoStatus,
+  onOpenDemoModal,
 }) => {
   const memoryKeyCount = Object.keys(sessionMemory.memoryLattice || {}).length;
 
@@ -111,6 +117,38 @@ export const Header: React.FC<HeaderProps> = ({
             <span>Memory Lattice: {memoryKeyCount} keys</span>
             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
           </button>
+
+          {/* Demo Quota / Access Status Pill */}
+          {demoStatus && onOpenDemoModal && (
+            <button
+              onClick={onOpenDemoModal}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-mono transition-all ${
+                demoStatus.isAuthorized
+                  ? 'border-emerald-800/60 bg-emerald-950/30 text-emerald-300 hover:bg-emerald-950/50'
+                  : demoStatus.demoExceeded
+                  ? 'border-rose-800/80 bg-rose-950/50 text-rose-300 animate-pulse hover:bg-rose-950/70'
+                  : 'border-cyan-800/40 bg-slate-900/80 text-cyan-300 hover:bg-cyan-950/60'
+              }`}
+              title="Demo quota & Google AI Studio deployment options"
+            >
+              <KeyRound
+                className={`w-3.5 h-3.5 ${
+                  demoStatus.isAuthorized
+                    ? 'text-emerald-400'
+                    : demoStatus.demoExceeded
+                    ? 'text-rose-400'
+                    : 'text-cyan-400'
+                }`}
+              />
+              <span>
+                {demoStatus.isAuthorized
+                  ? 'Host Access'
+                  : demoStatus.demoExceeded
+                  ? 'Demo Limit Reached'
+                  : `Demo: ${demoStatus.demoRemaining ?? demoStatus.demoLimit - demoStatus.demoUsed} left`}
+              </span>
+            </button>
+          )}
         </div>
 
         {/* Navigation Tabs */}
