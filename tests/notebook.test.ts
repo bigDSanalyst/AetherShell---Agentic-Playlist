@@ -72,6 +72,10 @@ test('fetching follows redirects only between Drive and GitHub hosts, and explai
     /refused to follow a redirect to evil\.example/
   );
   await assert.rejects(
+    fetchNotebook('https://drive.google.com/uc?id=P', fake({ 'https://drive.google.com/uc?id=P': new Response('denied', { status: 403 }) })),
+    /access refused \(403\): share the notebook as "Anyone with the link"/
+  );
+  await assert.rejects(
     fetchNotebook('https://drive.google.com/uc?id=Z', fake({ 'https://drive.google.com/uc?id=Z': new Response('<html><body>Sign in</body></html>') })),
     /not shared as "Anyone with the link"/
   );

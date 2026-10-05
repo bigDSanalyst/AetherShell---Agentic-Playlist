@@ -149,7 +149,15 @@ export async function fetchNotebook(fetchUrl: string, doFetch: typeof fetch = fe
       url = new URL(next, url).toString();
       continue;
     }
-    if (!res.ok) throw new Error(res.status === 404 ? 'not found (is the link right, and the notebook public?)' : `the server answered ${res.status}`);
+    if (!res.ok) {
+      throw new Error(
+        res.status === 404
+          ? 'not found (is the link right, and the notebook public?)'
+          : res.status === 401 || res.status === 403
+          ? `access refused (${res.status}): share the notebook as "Anyone with the link", or download it as .ipynb and upload it`
+          : `the server answered ${res.status}`
+      );
+    }
     const len = Number(res.headers.get('content-length') || 0);
     if (len > MAX_NOTEBOOK_BYTES) throw new Error('the notebook is larger than 10 MB');
     const text = await res.text();
