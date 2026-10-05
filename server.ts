@@ -56,6 +56,7 @@ import { buildCorpus, collectionId } from './server/corpus';
 import { checkChatAnswer } from './server/claimCheck';
 import { fetchNotebook, isSourceId, notebookSource, parseNotebook, resolveNotebookUrl } from './server/notebook';
 import { buildNotebook } from './server/notebookExport';
+import { googleClientId, sanitizePickedIngest } from './server/youtubeAccount';
 import { redactKey, visitorKey } from './server/byok';
 import { LatencyStats, transcriptBlock } from './server/latency';
 import { cleanIp, envFloat, envInt, envIntOrZero, rateLimit, requireAccessToken, demoStore, validateAccessToken } from './server/http';
@@ -1182,6 +1183,41 @@ async function startServer() {
       },
       missing,
     });
+  });
+
+  // The Google sign-in client id for the playlist picker (public, not a secret);
+  // null hides the picker.
+  app.get('/api/config/google-client', (_req: Request, res: Response) => {
+    res.json({ clientId: googleClientId(process.env) });
+  });
+
+  // Videos the owner picked from their own YouTube account in the browser (the
+  // Google token stays in the browser; only video ids come here). Ingested like
+  // a playlist: archive, captions, then Gemini from the URL when YouTube refuses.
+  app.post('/api/youtube/ingest-videos', async (req: Request, res: Response) => {
+    try {
+      const picked = sanitizePickedIngest(req.body, envInt('YOUTUBE_MAX_PLAYLIST_VIDEOS', 25));
+      if ('error' in picked) return res.status(400).json({ error: picked.error });
+      const modelFallback = req.body?.modelFallback !== false;
+      const { videos, metadataNote } = await ingestVideos(picked.items, { modelFallback });
+      const withText = videos.filter((v) => v.rawTranscript).length;
+      res.json({
+        success: true,
+        source: 'youtube-account',
+        transcriptCoverage: { withTranscript: withText, total: videos.length },
+        transcriptProblems: summarizeTranscriptFailures(videos),
+        metadataNote,
+        playlist: {
+          id: picked.playlistId ? `playlist-${picked.playlistId}` : collectionId(videos.map((v) => v.youtubeId)),
+          title: picked.title,
+          description: `Picked from your YouTube account (${videos.length} video(s))`,
+          url: picked.playlistId ? `https://www.youtube.com/playlist?list=${picked.playlistId}` : '',
+          videos,
+        },
+      });
+    } catch (err: any) {
+      sendError(res, err, 'Failed to ingest the picked videos');
+    }
   });
 
   // A Jupyter / Colab notebook as a source, next to videos: an uploaded .ipynb

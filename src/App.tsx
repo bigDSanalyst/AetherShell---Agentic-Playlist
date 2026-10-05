@@ -35,6 +35,7 @@ import {
   submitProvidedTranscript,
   buildCollection,
   importNotebook,
+  ingestPickedVideos,
   isNotebookLink,
   watermarkAndBindCrypto,
   runRclSsiCycle,
@@ -248,6 +249,23 @@ export default function App() {
       `Imported notebook "${nb?.title}" (${nb?.segments?.length ?? 0} cells with text)${left}` + (merging ? ` · added to the current set (now ${next.videos.length})` : ''),
       'success'
     );
+  };
+
+  // Videos picked from the owner's own YouTube account (sign-in stays in the browser).
+  const handlePickedPlaylist = async (p: { playlistId: string; title: string; items: { videoId: string; title: string; channel: string }[]; skipped: number; nonPublic: number }) => {
+    setIsLoading(true);
+    try {
+      await applyIngested(await ingestPickedVideos({ playlistId: p.playlistId, title: p.title, items: p.items, modelFallback }));
+      const notes = [
+        p.skipped ? `${p.skipped} deleted or hidden video(s) skipped` : '',
+        p.nonPublic ? `${p.nonPublic} private/unlisted video(s): Gemini cannot transcribe those` : '',
+      ].filter(Boolean);
+      if (notes.length) showToast(notes.join(' · '), 'info');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to ingest the playlist', 'error');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleImportNotebookFile = async (file: File) => {
@@ -804,6 +822,7 @@ export default function App() {
             setAddToSet={setAddToSet}
             onLoadCollection={handleLoadCollection}
             onImportNotebookFile={handleImportNotebookFile}
+            onPickedPlaylist={handlePickedPlaylist}
             transcribeProgress={transcribeProgress}
             isLoading={isLoading}
             onProceedToInnershell={() => setActiveTab('innershell')}

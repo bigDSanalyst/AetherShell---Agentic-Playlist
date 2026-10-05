@@ -70,6 +70,7 @@ Run lint and tests before every commit.
 | Combining videos: knowledge corpus (fair share, cuts reported), collection ids | `server/corpus.ts`, `src/utils/collection.ts` |
 | Access control, demo allowance, visitor's own Gemini key | `server/http.ts`, `server/byok.ts`, `src/components/DemoLimitModal.tsx`, `src/components/OwnKeyPanel.tsx` |
 | Notebooks in (.ipynb, Colab/Drive/GitHub links) and out (export with a Python signature check) | `server/notebook.ts`, `server/notebookExport.ts`, `src/components/ExportNotebookButton.tsx` |
+| YouTube sign-in playlist picker (token stays in the browser) | `src/utils/youtubeAccount.ts`, `src/components/YouTubeAccountPicker.tsx`, `server/youtubeAccount.ts` |
 | GitHub guard URL validation | `server/github.ts` |
 | Browser sandbox for untrusted code | `src/utils/sandbox.ts` |
 | Playlist JSON export | `src/utils/playlistExport.ts` |

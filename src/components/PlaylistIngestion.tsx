@@ -26,6 +26,7 @@ import { VideoMetadataCard } from './VideoMetadataCard';
 import { copyText } from '../utils/clipboard';
 import { transcriptSourceLabel } from '../utils/transcriptSource';
 import { TranscriptLibrary } from './TranscriptLibrary';
+import { YouTubeAccountPicker } from './YouTubeAccountPicker';
 
 interface PlaylistIngestionProps {
   playlist: PlaylistData | null;
@@ -42,6 +43,7 @@ interface PlaylistIngestionProps {
   setAddToSet: (on: boolean) => void;
   onLoadCollection: (videoIds: string[], title?: string) => void;
   onImportNotebookFile: (file: File) => void;
+  onPickedPlaylist: React.ComponentProps<typeof YouTubeAccountPicker>['onPick'];
   transcribeProgress?: { current: number; total: number; currentTitle: string; percent: number } | null;
   isLoading: boolean;
   onProceedToInnershell: () => void;
@@ -63,6 +65,7 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
   setAddToSet,
   onLoadCollection,
   onImportNotebookFile,
+  onPickedPlaylist,
   transcribeProgress,
   isLoading,
   onProceedToInnershell,
@@ -187,6 +190,7 @@ export const PlaylistIngestion: React.FC<PlaylistIngestionProps> = ({
           />
           If YouTube refuses or a video has no captions, transcribe it with Gemini (labelled machine transcription; uses Gemini quota)
         </label>
+        <YouTubeAccountPicker isLoading={isLoading} onPick={onPickedPlaylist} />
         <label className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-sky-800/60 bg-sky-950/40 text-sky-300 text-[11px] font-mono cursor-pointer hover:bg-sky-900/50" title="A Jupyter / Colab notebook: in Colab, File → Download → Download .ipynb">
           <FileText className="w-3.5 h-3.5" />
           Upload a notebook (.ipynb)
