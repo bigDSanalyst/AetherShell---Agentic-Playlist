@@ -39,7 +39,7 @@ interface InnerShellBodyProps {
   activeVideo: VideoNode | null;
   sessionMemory: PersistentSessionMemory;
   onUpdateSessionMemory: (newMemory: Record<string, any>) => void;
-  onRunRclSsi: (iterations: number | 'auto', directives: string, writer?: string) => void;
+  onRunRclSsi: (iterations: number | 'auto', directives: string, writer?: string, refine?: 'revise' | 'rci') => void;
   isLoading: boolean;
   onProceedToCrypto: () => void;
   lastExecutionResult: ScriptExecutionResult | null;
@@ -65,6 +65,8 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
   const [autoPasses, setAutoPasses] = useState(false);
   // Let AetherTwin choose which model writes, from each model's own record.
   const [autoWriter, setAutoWriter] = useState(false);
+  // Grounded critique (RCI): each refinement pass first criticises the problems the server computed.
+  const [rci, setRci] = useState(false);
   const [userDirectives, setUserDirectives] = useState('');
   const [isExecutingScript, setIsExecutingScript] = useState(false);
   const [customScriptCode, setCustomScriptCode] = useState<string>('');
@@ -202,6 +204,13 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
               <input type="checkbox" checked={autoWriter} onChange={(e) => setAutoWriter(e.target.checked)} className="accent-emerald-400" />
               Let AetherTwin choose the writer model
             </label>
+            <label
+              className="flex items-center gap-1.5 text-[10px] font-mono text-slate-400 cursor-pointer"
+              title="Each refinement pass makes two calls: a critique of the problems the server computed against the transcript (quotes not found, claims in words the transcript does not use), then a fix of exactly those. Stops early when nothing computed is wrong. The guards judge the result unchanged."
+            >
+              <input type="checkbox" checked={rci} onChange={(e) => setRci(e.target.checked)} className="accent-emerald-400" />
+              Grounded critique (RCI): criticise computed problems, then fix
+            </label>
           </div>
 
           <div className="md:col-span-6 space-y-1">
@@ -219,7 +228,7 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
 
           <div className="md:col-span-3">
             <button
-              onClick={() => onRunRclSsi(autoPasses ? 'auto' : rclIterations, userDirectives, autoWriter ? 'auto' : undefined)}
+              onClick={() => onRunRclSsi(autoPasses ? 'auto' : rclIterations, userDirectives, autoWriter ? 'auto' : undefined, rci ? 'rci' : 'revise')}
               disabled={isLoading || !activeVideo?.rawTranscript}
               className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-slate-950 font-bold text-xs font-mono transition-all shadow-md shadow-cyan-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
             >
@@ -290,9 +299,41 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
                           {rnd.cycle > 1 && (
                             <span className="text-slate-400 text-[9px] block">{(rnd.changeFromPrevious * 100).toFixed(0)}% changed</span>
                           )}
+                          {typeof rnd.problems === 'number' && (
+                            <span className={`text-[9px] block ${rnd.problems ? 'text-amber-400' : 'text-emerald-400'}`} title={rnd.problemSummary}>
+                              {rnd.problems} problem{rnd.problems === 1 ? '' : 's'} computed
+                            </span>
+                          )}
                         </div>
                       ))}
                     </div>
+                    {rclAnalysis.stoppedEarly && <div className="text-emerald-400 text-[10px]">{rclAnalysis.stoppedEarly}</div>}
+                    {rclAnalysis.convergenceRounds
+                      .filter((rnd) => rnd.critique?.length)
+                      .map((rnd) => (
+                        <details key={`crit-${rnd.cycle}`} className="text-[10px] text-slate-300">
+                          <summary className="cursor-pointer text-cyan-300">
+                            Pass {rnd.cycle} critique ({rnd.critique!.length} computed problem{rnd.critique!.length === 1 ? '' : 's'}
+                            {rnd.critiqueModel ? `, by ${rnd.critiqueModel}` : ''})
+                          </summary>
+                          <ul className="mt-1 space-y-1">
+                            {rnd.critique!.map((c) => (
+                              <li key={c.id} className="p-1.5 rounded bg-slate-900 border border-slate-800">
+                                <span className="text-slate-400">{c.where}</span> · <span className="text-amber-300">{c.kind}</span>: {c.detail}
+                                <span className="block text-slate-500 truncate" title={c.text}>“{c.text}”</span>
+                                <span className="block">
+                                  <strong className="text-cyan-300">{c.verdict}</strong> — {c.reason || 'no reason given'}
+                                </span>
+                                {c.transcriptQuote && (
+                                  <span className={`block ${c.quoteFound ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                    {c.quoteFound ? 'cited quote found in transcript' : 'cited quote NOT in transcript (not used)'}: “{c.transcriptQuote}”
+                                  </span>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      ))}
                   </div>
                 )}
 

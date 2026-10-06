@@ -606,6 +606,14 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
               Without: {shadowState.learning.lessonEffect.withoutLessons.passed}/{shadowState.learning.lessonEffect.withoutLessons.n}.
               {' '}{shadowState.learning.lessonEffect.confidence ? `${shadowState.learning.lessonEffect.confidence}.` : ''} Reported, not acted on.
             </p>
+            {shadowState.learning.refineEffect && (
+              <p className="text-slate-400 font-sans">
+                Grounded critique (RCI): {shadowState.learning.refineEffect.rci.passed}/{shadowState.learning.refineEffect.rci.n} passed
+                {shadowState.learning.refineEffect.rciAveragePassesRun !== null ? ` (avg ${shadowState.learning.refineEffect.rciAveragePassesRun} passes run)` : ''}.
+                Plain revision: {shadowState.learning.refineEffect.revise.passed}/{shadowState.learning.refineEffect.revise.n}. Syntheses with more than one pass.
+                {' '}{shadowState.learning.refineEffect.confidence}. Reported, not acted on.
+              </p>
+            )}
             {shadowState.learning.playlists.map((p: any) => (
               <div key={p.playlistKey} className="p-2 rounded-lg bg-slate-950/70 border border-slate-800 space-y-1">
                 <div className="text-slate-300">{p.playlistKey}</div>

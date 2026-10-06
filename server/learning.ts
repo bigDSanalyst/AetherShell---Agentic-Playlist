@@ -81,6 +81,8 @@ export interface SynthesisOutcome {
   lessonsUsed: string[];
   lessonWriters: string[]; // the writer of each lesson shown, same order
   examplesUsed: string[];
+  refine: 'revise' | 'rci'; // how passes after the first refined (older entries: revise)
+  passesRun: number; // fewer than passes when RCI stopped early
   verdicts: { seq: number; evaluator: string; reviewer: string | null; passed: boolean; overridden: boolean }[];
   // 1 = every verdict that judged it passed, 0 = at least one failed, null = not judged yet.
   reward: 0 | 1 | null;
@@ -114,6 +116,8 @@ export function synthesisOutcomes(entries: readonly Entry[]): SynthesisOutcome[]
       lessonsUsed: Array.isArray(s.data.lessonsUsed) ? s.data.lessonsUsed.map(String) : [],
       lessonWriters: Array.isArray(s.data.lessonWriters) ? s.data.lessonWriters.map(String) : [],
       examplesUsed: Array.isArray(s.data.examplesUsed) ? s.data.examplesUsed.map(String) : [],
+      refine: s.data.refine === 'rci' ? 'rci' : 'revise',
+      passesRun: Number.isFinite(s.data.passesRun) ? Number(s.data.passesRun) : Number(s.data.passes),
       verdicts,
       reward: verdicts.length === 0 ? null : verdicts.every((v) => v.passed) ? 1 : 0,
     });
@@ -516,6 +520,28 @@ export function lessonEffectConfidence(outcomes: readonly SynthesisOutcome[]) {
     { key: 'with lessons', n: e.withLessons.n, wins: e.withLessons.passed },
     { key: 'without lessons', n: e.withoutLessons.n, wins: e.withoutLessons.passed },
   ]);
+}
+
+// Grounded critique (RCI) against plain revision, among judged syntheses that
+// were allowed more than one pass (with one pass the two are the same). Reported,
+// never acted on: the owner chooses the refinement mode.
+export function refineEffect(outcomes: readonly SynthesisOutcome[]) {
+  const judged = outcomes.filter((o) => o.reward !== null && o.passes > 1);
+  const split = (xs: SynthesisOutcome[]) => ({ n: xs.length, passed: xs.filter((o) => o.reward === 1).length });
+  const rci = judged.filter((o) => o.refine === 'rci');
+  const revise = judged.filter((o) => o.refine === 'revise');
+  const a = split(rci);
+  const b = split(revise);
+  const rciRuns = rci.length ? rci.reduce((s, o) => s + o.passesRun, 0) / rci.length : null;
+  return {
+    rci: a,
+    revise: b,
+    rciAveragePassesRun: rciRuns === null ? null : r4(rciRuns),
+    confidence: credibleLeader([
+      { key: 'grounded critique (RCI)', n: a.n, wins: a.passed },
+      { key: 'plain revision', n: b.n, wins: b.passed },
+    ]).statement,
+  };
 }
 
 // --- per-model shells ----------------------------------------------------------------
