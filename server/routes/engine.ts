@@ -4,7 +4,7 @@ import { signedSourceLabel, transcriptSourceFromLedger } from '../transcribe';
 import { MalformedTextError, hashLogic, hashTranscript, watermarkAndCompress } from '../provenance';
 import { changeBetween, logicClaimText, round4, wordOverlap } from '../grounding';
 import { charterSha256 } from '../charter';
-import { HABIT_KINDS, chooseArm, chooseWriter, habitsPromptBlock, knownHabitsOf, learningPromptBlock, playlistKeyOf, synthesisOutcomes } from '../learning';
+import { HABIT_KINDS, chooseArm, chooseWriter, lengthBucketOf, transcriptWords, habitsPromptBlock, knownHabitsOf, learningPromptBlock, playlistKeyOf, synthesisOutcomes } from '../learning';
 import { transcriptBlock } from '../latency';
 import { type CritiqueItem, critiquePrompt, findProblems, findingsSummary, improvePrompt, sanitizeCritique } from '../rci';
 import { Evaluator, MAX_TRANSCRIPT_CHARS, MODEL_CASCADE, NoCharterError, RCL_SCHEMA, callModelJson, callableWriters, charterState, learningStore, normalizeForQuote, raiseSystemConcerns, runGuardShell, runLedger, sanitizeInvariants, sanitizeLogic, sendError, signingKeys } from '../core';
@@ -84,7 +84,10 @@ export function registerEngineRoutes(app: Express) {
       const writerChosenBy = writerPick ? 'learned' : candidates.includes(writerRequest) ? 'owner' : 'default';
       const writeModels = [writer, ...MODEL_CASCADE.filter((m) => m !== writer)];
       // Passes: learned from this writer's own record (over the other models'), or as chosen.
-      const learned = rclIterations === 'auto' ? chooseArm(outcomesSoFar, playlistKey, writer) : null;
+      // Transcript length: the bandit learns pass counts per length bucket.
+      const words = transcriptWords(transcript);
+      const lengthBucket = lengthBucketOf(words);
+      const learned = rclIterations === 'auto' ? chooseArm(outcomesSoFar, playlistKey, writer, lengthBucket) : null;
       const iterations = learned ? learned.passes : Math.max(1, Math.min(5, Math.round(Number(rclIterations) || 1)));
       const { lessons, example } = learningStore.select(runLedger.all(), playlistKey, transcriptSha256, writer);
       // The intended writer's known first-draft habits, across all playlists (counts from the ledger).
@@ -182,6 +185,8 @@ ${RCL_SCHEMA}`;
         passes: iterations,
         passesRun,
         refine,
+        transcriptWords: words,
+        lengthBucket,
         draftWriter: rounds[0].modelUsed,
         draftProblems,
         habitsShown: habits.map((h) => h.kind),
@@ -232,6 +237,8 @@ ${RCL_SCHEMA}`;
         learning: {
           playlistKey,
           passes: iterations,
+          lengthBucket,
+          transcriptWords: words,
           chosenBy: learned ? 'learned' : 'owner',
           why: learned ? learned.why : `You chose ${iterations} pass(es).`,
           writer: last.modelUsed,

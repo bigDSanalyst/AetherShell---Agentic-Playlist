@@ -17,7 +17,7 @@ import { ExchangeError, concerns as exchangeConcerns, systemConcernsFromRecord }
 import { RunLedger, type LedgerEntry } from './runLedger';
 import { GeminiUsage, classifyGeminiError, formatDuration, secondsUntilReset } from './geminiUsage';
 import { configuredProviders, modelCascade, openAICompatibleGenerate, parseModelRef, toChatMessages } from './models';
-import { LearningStore, chooseArm, chooseWriter, lessonEffect, lessonEffectConfidence, modelShells, refineEffect, synthesisOutcomes, armStats } from './learning';
+import { LENGTH_BUCKETS, LearningStore, chooseArm, chooseWriter, lessonEffect, lessonEffectConfidence, modelShells, refineEffect, synthesisOutcomes, armStats } from './learning';
 import { ledgerDrift } from './eprocess';
 import { TranscriptArchive, retryDelaySeconds } from './transcriptArchive';
 import { buildCorpus } from './corpus';
@@ -226,6 +226,12 @@ export function learningReport(playlistKey?: string) {
       syntheses: outcomes.filter((o) => o.playlistKey === k).length,
       arms: armStats(outcomes, k).filter((a) => a.n > 0),
       next: chooseArm(outcomes, k),
+      // The pass count "auto" would choose next for a transcript of each length.
+      byLength: LENGTH_BUCKETS.map((b) => ({
+        bucket: b,
+        judged: outcomes.filter((o) => o.playlistKey === k && o.lengthBucket === b && o.reward !== null).length,
+        next: chooseArm(outcomes, k, undefined, b).passes,
+      })),
     })),
     forPlaylist: playlistKey
       ? { playlistKey, next: chooseArm(outcomes, playlistKey), writer: chooseWriter(outcomes, playlistKey, callableWriters()) }

@@ -623,6 +623,12 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
                     : 'No judged syntheses here yet.'}
                 </div>
                 <div className="text-emerald-300/90 font-sans">Next "auto" choice: {p.next.why}</div>
+                {p.byLength && (
+                  <div className="text-slate-400 font-sans">
+                    By transcript length (next "auto" passes):{' '}
+                    {p.byLength.map((b: any) => `${b.bucket} ${b.next} (${b.judged} judged)`).join(' · ')}
+                  </div>
+                )}
               </div>
             ))}
             {/* Each model's own shell: its record as writer and as reviewer */}

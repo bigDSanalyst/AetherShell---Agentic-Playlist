@@ -207,3 +207,15 @@ test('known habits: after 5 first drafts with an invented quote, the 6th draft i
   const q = shell.habits.habits.find((h: any) => h.kind === 'quote-not-found');
   assert.deepEqual([q.drafts, q.of, q.known, q.whenShown, q.whenNotShown], [6, 6, true, { drafts: 1, of: 1 }, { drafts: 5, of: 5 }]);
 });
+
+test('each synthesis records its transcript length, and "auto" passes are chosen within that length', async () => {
+  const out = await (await cycle({ rclIterations: 'auto' })).json();
+  assert.equal(out.learning.lengthBucket, 'short');
+  assert.equal(out.learning.transcriptWords, 18);
+  assert.match(out.learning.why, /short transcripts/);
+  const entries = (await (await fetch(`${base}/api/ledger/entries`)).json()).entries;
+  const last = entries.filter((e: any) => e.kind === 'synthesis').at(-1);
+  assert.deepEqual([last.data.lengthBucket, last.data.transcriptWords, last.data.chosenBy], ['short', 18, 'learned']);
+  const p = (await (await fetch(`${base}/api/learning`)).json()).learning.playlists.find((x: any) => x.playlistKey === 'playlist:pl-rci');
+  assert.deepEqual(p.byLength.map((b: any) => b.bucket), ['short', 'medium', 'long']);
+});

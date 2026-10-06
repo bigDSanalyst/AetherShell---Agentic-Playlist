@@ -435,7 +435,12 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
                         : ''}
                       . {rclAnalysis.learning.writerWhy}
                     </p>
-                    <p className="text-slate-400 font-sans text-xs">{rclAnalysis.learning.why}</p>
+                    <p className="text-slate-400 font-sans text-xs">
+                      {rclAnalysis.learning.lengthBucket
+                        ? `Transcript: ${rclAnalysis.learning.transcriptWords?.toLocaleString() ?? '?'} words (${rclAnalysis.learning.lengthBucket}). `
+                        : ''}
+                      {rclAnalysis.learning.why}
+                    </p>
                     <div className="text-slate-400 font-sans text-xs space-y-0.5">
                       {rclAnalysis.learning.lessonsUsed.length ? (
                         rclAnalysis.learning.lessonsUsed.map((l) => (

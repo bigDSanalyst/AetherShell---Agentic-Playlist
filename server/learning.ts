@@ -83,6 +83,7 @@ export interface SynthesisOutcome {
   examplesUsed: string[];
   refine: 'revise' | 'rci'; // how passes after the first refined (older entries: revise)
   passesRun: number; // fewer than passes when RCI stopped early
+  lengthBucket: LengthBucket | null; // null for entries from before lengths were recorded
   verdicts: { seq: number; evaluator: string; reviewer: string | null; passed: boolean; overridden: boolean }[];
   // 1 = every verdict that judged it passed, 0 = at least one failed, null = not judged yet.
   reward: 0 | 1 | null;
@@ -118,6 +119,7 @@ export function synthesisOutcomes(entries: readonly Entry[]): SynthesisOutcome[]
       examplesUsed: Array.isArray(s.data.examplesUsed) ? s.data.examplesUsed.map(String) : [],
       refine: s.data.refine === 'rci' ? 'rci' : 'revise',
       passesRun: Number.isFinite(s.data.passesRun) ? Number(s.data.passesRun) : Number(s.data.passes),
+      lengthBucket: (LENGTH_BUCKETS as readonly unknown[]).includes(s.data.lengthBucket) ? (s.data.lengthBucket as LengthBucket) : null,
       verdicts,
       reward: verdicts.length === 0 ? null : verdicts.every((v) => v.passed) ? 1 : 0,
     });
@@ -126,6 +128,22 @@ export function synthesisOutcomes(entries: readonly Entry[]): SynthesisOutcome[]
 }
 
 // --- pass-count bandit -----------------------------------------------------------
+
+// Transcript length, in three buckets by word count (about 150 spoken words a
+// minute): a 5-minute clip and a 2-hour panel need different pass counts, and
+// that difference holds across playlists. Fixed numbers, not a guard setting.
+export const LENGTH_BUCKETS = ['short', 'medium', 'long'] as const;
+export type LengthBucket = (typeof LENGTH_BUCKETS)[number];
+export const SHORT_MAX_WORDS = 2250; // about 15 minutes
+export const MEDIUM_MAX_WORDS = 9000; // about 60 minutes
+
+export function transcriptWords(transcript: string): number {
+  return transcript.split(/\s+/).filter(Boolean).length;
+}
+
+export function lengthBucketOf(words: number): LengthBucket {
+  return words < SHORT_MAX_WORDS ? 'short' : words <= MEDIUM_MAX_WORDS ? 'medium' : 'long';
+}
 
 export interface ArmStat {
   passes: number;
@@ -146,17 +164,23 @@ export interface ArmStat {
 // prior borrows from every model's record here, which in turn borrows from
 // everything. A model with little history leans on the others, and its own
 // evidence takes over as it accumulates.
-export function armStats(outcomes: readonly SynthesisOutcome[], playlistKey: string, writer?: string): ArmStat[] {
+export function armStats(outcomes: readonly SynthesisOutcome[], playlistKey: string, writer?: string, bucket?: LengthBucket): ArmStat[] {
   const judged = outcomes.filter((o) => o.reward !== null);
-  const herePlaylist = judged.filter((o) => o.playlistKey === playlistKey);
+  // With a length bucket, only runs on transcripts of that length are this cell's
+  // own evidence; its prior is the same length in every playlist, which in turn
+  // borrows from all runs. Older runs without a recorded length count only there.
+  const sameLength = bucket ? judged.filter((o) => o.lengthBucket === bucket) : judged;
+  const herePlaylist = sameLength.filter((o) => o.playlistKey === playlistKey);
   const here = writer ? herePlaylist.filter((o) => o.writer === writer) : herePlaylist;
   const total = here.length;
   return ARMS.map((passes) => {
     const mine = here.filter((o) => o.passes === passes);
-    const all = judged.filter((o) => o.passes === passes);
+    const everywhere = judged.filter((o) => o.passes === passes);
+    const overallMean = (everywhere.filter((o) => o.reward === 1).length + 1) / (everywhere.length + 2);
+    const all = sameLength.filter((o) => o.passes === passes);
     const wins = mine.filter((o) => o.reward === 1).length;
     const pooledWins = all.filter((o) => o.reward === 1).length;
-    const globalMean = (pooledWins + 1) / (all.length + 2);
+    const globalMean = bucket ? (pooledWins + PRIOR_STRENGTH * overallMean) / (all.length + PRIOR_STRENGTH) : overallMean;
     const peers = herePlaylist.filter((o) => o.passes === passes);
     const priorMean = writer
       ? (peers.filter((o) => o.reward === 1).length + PRIOR_STRENGTH * globalMean) / (peers.length + PRIOR_STRENGTH)
@@ -170,22 +194,23 @@ export function armStats(outcomes: readonly SynthesisOutcome[], playlistKey: str
   });
 }
 
-export function chooseArm(outcomes: readonly SynthesisOutcome[], playlistKey: string, writer?: string) {
-  const stats = armStats(outcomes, playlistKey, writer);
+export function chooseArm(outcomes: readonly SynthesisOutcome[], playlistKey: string, writer?: string, bucket?: LengthBucket) {
+  const stats = armStats(outcomes, playlistKey, writer, bucket);
   const best = stats.reduce((a, b) => (b.score > a.score ? b : a));
   const judgedHere = stats.reduce((s, a) => s + a.n, 0);
   const tried = stats.filter((a) => a.n > 0).map((a) => `${a.passes} pass(es) ${a.wins}/${a.n}`);
-  const pooled = best.pooledN ? ` (${best.pooledWins}/${best.pooledN} across all playlists)` : '';
+  const where = bucket ? `this playlist's ${bucket} transcripts` : 'this playlist';
+  const pooled = best.pooledN ? ` (${best.pooledWins}/${best.pooledN} across all playlists${bucket ? ` on ${bucket} transcripts` : ''})` : '';
   const why =
     judgedHere === 0 && best.pooledN === 0
-      ? `No judged syntheses yet; starting at ${best.passes} pass(es), the cheapest option, and learning from the guards' verdicts.`
+      ? `No judged syntheses yet${bucket ? ` on ${bucket} transcripts` : ''}; starting at ${best.passes} pass(es), the cheapest option, and learning from the guards' verdicts.`
       : best.n === 0
-      ? `${best.passes} pass(es): not tried in this playlist yet${pooled}; exploring it because what has been tried here is uncertain or failing` +
+      ? `${best.passes} pass(es): not tried in ${where} yet${pooled}; exploring it because what has been tried here is uncertain or failing` +
         (tried.length ? ` (${tried.join(', ')} passed).` : '.')
-      : `${best.passes} pass(es): ${best.wins}/${best.n} passed the guards in this playlist${pooled};` +
+      : `${best.passes} pass(es): ${best.wins}/${best.n} passed the guards in ${where}${pooled};` +
         ` estimated pass rate ${Math.round(best.mean * 100)}%, exploration bonus ${best.bonus}, cost ${r4(PASS_COST * (best.passes - 1))}.` +
         ` Highest score of ${stats.length} options.`;
-  return { passes: best.passes, why: writer ? `${writer}: ${why}` : why, stats };
+  return { passes: best.passes, bucket: bucket ?? null, why: writer ? `${writer}: ${why}` : why, stats };
 }
 
 // --- how sure: Hoeffding confidence over k compared rates ---------------------------
