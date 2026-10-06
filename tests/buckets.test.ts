@@ -26,6 +26,8 @@ const run = (playlistKey: string, lengthBucket: LengthBucket | null, passes: num
   refine: 'revise',
   passesRun: passes,
   lengthBucket,
+  escalatedTo: null,
+  problemsAtEnd: null,
   verdicts: [],
   reward: passed ? 1 : 0,
 });

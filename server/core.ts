@@ -17,7 +17,7 @@ import { ExchangeError, concerns as exchangeConcerns, systemConcernsFromRecord }
 import { RunLedger, type LedgerEntry } from './runLedger';
 import { GeminiUsage, classifyGeminiError, formatDuration, secondsUntilReset } from './geminiUsage';
 import { configuredProviders, modelCascade, openAICompatibleGenerate, parseModelRef, toChatMessages } from './models';
-import { LENGTH_BUCKETS, LearningStore, chooseArm, chooseWriter, lessonEffect, lessonEffectConfidence, modelShells, refineEffect, synthesisOutcomes, armStats } from './learning';
+import { LENGTH_BUCKETS, LearningStore, chooseArm, escalationEffect, chooseWriter, lessonEffect, lessonEffectConfidence, modelShells, refineEffect, synthesisOutcomes, armStats } from './learning';
 import { ledgerDrift } from './eprocess';
 import { TranscriptArchive, retryDelaySeconds } from './transcriptArchive';
 import { buildCorpus } from './corpus';
@@ -221,6 +221,7 @@ export function learningReport(playlistKey?: string) {
     ...learningStore.report(entries),
     lessonEffect: { ...lessonEffect(outcomes), confidence: lessonEffectConfidence(outcomes).statement },
     refineEffect: refineEffect(outcomes),
+    escalationEffect: escalationEffect(outcomes),
     playlists: keys.map((k) => ({
       playlistKey: k,
       syntheses: outcomes.filter((o) => o.playlistKey === k).length,
@@ -240,6 +241,21 @@ export function learningReport(playlistKey?: string) {
     shells: modelShells(entries, learningStore),
     recent: outcomes.slice(-10).reverse(),
   };
+}
+
+// Escalation: the model(s) an RCL run moves up to, for its remaining passes, when
+// computed problems are still there after the writer's own first fix pass. In
+// order; the first one that can be called now and is not already writing is used.
+// Which writer to start with stays the owner's (or AetherTwin's) choice; this is
+// not a guard setting and changes nothing about how the guards judge.
+export const ESCALATE_TO = (process.env.AETHERSHELL_ESCALATE_TO || '')
+  .split(',')
+  .map((m) => m.trim())
+  .filter(Boolean);
+
+export function escalationTarget(current: string): string | null {
+  const callable = callableWriters();
+  return ESCALATE_TO.find((m) => m !== current && callable.includes(m)) ?? null;
 }
 
 // Models that can write right now: configured provider, daily quota not reported used up.

@@ -381,6 +381,7 @@ export async function runRclSsiCycle(params: {
   userDirectives?: string;
   writer?: string; // a model ref, 'auto' (AetherTwin chooses), or omitted (first configured)
   refine?: 'revise' | 'rci'; // how passes after the first refine
+  escalate?: boolean; // move up to AETHERSHELL_ESCALATE_TO when computed problems remain after the writer's own fix
 }): Promise<{
   rclResult: RclAnalysis;
   innershellLogic: InnershellLogic;
@@ -734,7 +735,7 @@ export interface ModelInfo {
   available: boolean; // the provider is set up on the server
 }
 
-export async function fetchModels(): Promise<{ models: ModelInfo[]; guardReviewModels: string[] | null }> {
+export async function fetchModels(): Promise<{ models: ModelInfo[]; guardReviewModels: string[] | null; escalateTo?: string[] }> {
   const res = await apiFetch('/api/models');
   if (!res.ok) throw new Error(`server answered ${res.status}`);
   return res.json();

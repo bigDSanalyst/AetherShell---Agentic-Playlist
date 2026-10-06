@@ -435,7 +435,7 @@ export default function App() {
   };
 
   // Handler: Run RCL and SSI synthesis in Innershell Body
-  const handleRunRclSsi = async (iterations: number | 'auto', directives: string, writer?: string, refine?: 'revise' | 'rci') => {
+  const handleRunRclSsi = async (iterations: number | 'auto', directives: string, writer?: string, refine?: 'revise' | 'rci', escalate?: boolean) => {
     if (!activeVideo?.rawTranscript) {
       showToast('Please select a video with transcript dialogue first', 'error');
       return;
@@ -451,6 +451,7 @@ export default function App() {
         userDirectives: directives,
         writer,
         refine,
+        escalate,
       });
 
       setRclAnalysis({ ...res.rclResult, learning: res.learning });

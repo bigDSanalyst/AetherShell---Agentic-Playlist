@@ -1,7 +1,7 @@
 // AetherTwin telemetry, model and Gemini usage, learning report.
 import type { Express, Request, Response } from 'express';
 import { parseModelRef } from '../models';
-import { MODEL_CASCADE, PROVIDER_CONFIG, charterState, dailyLimitFor, geminiUsage, guardEntries, latency, learningReport, refreshTwinStats, shadowState, usageModels } from '../core';
+import { ESCALATE_TO, MODEL_CASCADE, PROVIDER_CONFIG, charterState, dailyLimitFor, geminiUsage, guardEntries, latency, learningReport, refreshTwinStats, shadowState, usageModels } from '../core';
 
 export function registerTwinRoutes(app: Express) {
   // AetherTwin: observed guard outcomes only.
@@ -73,6 +73,8 @@ export function registerTwinRoutes(app: Express) {
         return { ref, provider: m.provider, model: m.model, available: !!PROVIDER_CONFIG[m.provider] };
       }),
       guardReviewModels: charterState.signed?.charter.guard.reviewModels ?? null,
+      // Where an RCL run may move up to when computed problems remain (AETHERSHELL_ESCALATE_TO).
+      escalateTo: ESCALATE_TO,
     });
   });
 

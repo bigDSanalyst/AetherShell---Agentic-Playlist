@@ -154,6 +154,8 @@ export interface RclAnalysis {
   passesPlanned?: number;
   refine?: 'revise' | 'rci';
   stoppedEarly?: string | null;
+  escalation?: { from: string; to: string; atPass: number; problemsBefore: number; problemsAfter: number; note: string } | null;
+  escalationNote?: string | null; // why escalation was asked for but did not happen
   learning?: SynthesisLearning;
   extractedInvariants: string[];
   sotaReflexiveInvariants?: SotaReflexiveInvariant[];
