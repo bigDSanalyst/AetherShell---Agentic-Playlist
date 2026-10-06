@@ -55,6 +55,9 @@ Run lint and tests before every commit.
 
 | Area | Files |
 | --- | --- |
+| HTTP server: middleware, then the route files, then the page | `server.ts` |
+| API endpoints, one file per area (auth, youtube, transcripts, notebooks, engine, knowledge, githubGuards, twin, governance, ledger) | `server/routes/*.ts`; tested in `tests/http.test.ts` (real server) and `tests/routes.test.ts` (which file owns which endpoint) |
+| Shared server state: model calls, signing keys, ledger, charter state, archive, Guard Shell, ingest helpers | `server/core.ts` |
 | Signing, hashes, guard provenance checks | `server/provenance.ts` |
 | Guard Beta's independent verifier (must not import provenance.ts) | `server/witness.ts` |
 | Guard charter (owner-signed settings) | `server/charter.ts`, `scripts/owner.ts` |

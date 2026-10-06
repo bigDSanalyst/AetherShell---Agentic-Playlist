@@ -91,7 +91,7 @@ export class DemoUsageStore {
   private memory = new Map<string, DemoEntry>();
 
   // file: where counts persist (null: memory only, e.g. in tests).
-  constructor(private file: string | null = path.join(process.cwd(), 'data', 'demo-usage.json')) {
+  constructor(private file: string | null = process.env.AETHERSHELL_DEMO_USAGE_PATH || path.join(process.cwd(), 'data', 'demo-usage.json')) {
     this.load();
   }
 
