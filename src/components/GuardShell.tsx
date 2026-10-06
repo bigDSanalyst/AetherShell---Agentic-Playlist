@@ -32,7 +32,7 @@ import {
   GitHubGuardAuditResult,
   DualGuardComparisonReport,
 } from '../types';
-import { importGitHubGuard, executeGitHubGuardAudit, fetchCharterStatus, type CharterStatus } from '../services/api';
+import { importGitHubGuard, executeGitHubGuardAudit, fetchCharterStatus, installSignedCharter, type CharterStatus } from '../services/api';
 import { runSandboxed } from '../utils/sandbox';
 import { ExchangePanel } from './ExchangePanel';
 
@@ -77,6 +77,8 @@ export const GuardShell: React.FC<GuardShellProps> = ({
   const [isAuditingDual, setIsAuditingDual] = useState(false);
   const [charterStatus, setCharterStatus] = useState<CharterStatus | null>(null);
   const [charterError, setCharterError] = useState<string | null>(null);
+  const [charterInstallNote, setCharterInstallNote] = useState<string | null>(null);
+  const [charterRefresh, setCharterRefresh] = useState(0);
 
   // Which owner-signed charter governs the guards (refreshed after each audit).
   React.useEffect(() => {
@@ -86,7 +88,20 @@ export const GuardShell: React.FC<GuardShellProps> = ({
         setCharterError(null);
       })
       .catch((e) => setCharterError(e.message));
-  }, [guardReport?.guardShellTimestamp, guardReportBeta?.guardShellTimestamp]);
+  }, [guardReport?.guardShellTimestamp, guardReportBeta?.guardShellTimestamp, charterRefresh]);
+
+  // The owner uploads the charter file they signed on their own machine.
+  const installCharter = async (file: File | undefined) => {
+    if (!file) return;
+    setCharterInstallNote(null);
+    try {
+      const r = await installSignedCharter(await file.text());
+      setCharterInstallNote(`Charter v${r.version} installed: the server checked your signature. Guards are on.`);
+    } catch (e: any) {
+      setCharterInstallNote(e.message || 'Could not install the charter');
+    }
+    setCharterRefresh((n) => n + 1);
+  };
 
   // GitHub Import State
   const [repoUrl, setRepoUrl] = useState('');
@@ -269,12 +284,31 @@ export function validate(ctx: GuardContext): { passed: boolean; violations: stri
             </span>
           </>
         ) : (
-          <span>
-            Guards are disabled:{' '}
-            {charterError || charterStatus?.problems.join('; ') || 'checking charter…'} Only the owner can enable them with a signed charter
-            (npm run owner).
+          <span className="space-y-1.5 block">
+            <span className="block">
+              Guards are disabled:{' '}
+              {charterError || charterStatus?.problems.join('; ') || 'checking charter…'} Only the owner can enable them with a signed charter
+              (npm run owner).
+            </span>
+            <label className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-rose-700/60 bg-rose-950/50 text-rose-100 cursor-pointer hover:bg-rose-900/60">
+              Install signed charter (.json)
+              <input
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={(e) => {
+                  installCharter(e.target.files?.[0]);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+            <span className="block text-[10px] text-rose-300/80">
+              The file npm run owner wrote on your own machine (data/charter.json). The server checks it against AETHERSHELL_OWNER_PUBLIC_KEY; it cannot sign
+              one itself.
+            </span>
           </span>
         )}
+        {charterInstallNote && <span className="block text-[11px]">{charterInstallNote}</span>}
       </div>
 
       <ExchangePanel refreshKey={`${guardReport?.guardShellTimestamp}-${guardReportBeta?.guardShellTimestamp}`} />

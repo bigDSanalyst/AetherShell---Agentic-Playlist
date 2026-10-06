@@ -785,6 +785,22 @@ export interface CharterStatus {
   ownerKeyFingerprint: string | null;
 }
 
+// Installs a charter the owner signed on their own machine (npm run owner -- init
+// or sign). The server checks the signature against AETHERSHELL_OWNER_PUBLIC_KEY
+// and that it chains to the current one; it cannot sign one itself.
+export async function installSignedCharter(fileText: string): Promise<{ version: number }> {
+  let body: any;
+  try {
+    body = JSON.parse(fileText);
+  } catch {
+    throw new Error('That file is not JSON; choose the charter file written by npm run owner (e.g. data/charter.json).');
+  }
+  const res = await apiFetch('/api/charter', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error([data.error || 'The server did not accept the charter', ...(data.problems || [])].join(': '));
+  return { version: body?.charter?.version ?? data?.charter?.version };
+}
+
 export async function fetchCharterStatus(): Promise<CharterStatus> {
   const res = await apiFetch('/api/charter');
   if (!res.ok) throw new Error('Failed to read the guard charter');
