@@ -544,6 +544,99 @@ export function refineEffect(outcomes: readonly SynthesisOutcome[]) {
   };
 }
 
+// --- per-model known habits -------------------------------------------------------
+//
+// What each writer model tends to get wrong in its FIRST draft, across every
+// playlist, counted from the ledger. Each synthesis entry records the problems
+// the server computed in the draft (server/rci.ts kinds) and which model wrote
+// it. A habit is "known" only when the record says so with confidence: at
+// least HABIT_MIN_DRAFTS drafts, and the 95% Wilson lower bound of the rate at
+// or above HABIT_MIN_RATE (2 of 5 drafts is not enough; 3 of 5 is). Shown to
+// the same model as counts (data), never as advice to pad its wording, and never
+// as a guard threshold. A model that stops doing it sees the habit drop away.
+
+export const HABIT_KINDS = ['quote-not-found', 'no-quote', 'weakly-grounded'] as const;
+export type HabitKind = (typeof HABIT_KINDS)[number];
+export const HABIT_MIN_DRAFTS = 5;
+export const HABIT_MIN_RATE = 0.2;
+
+const HABIT_TEXT: Record<HabitKind, string> = {
+  'quote-not-found': 'gave an invariant a transcriptEvidence quote that is not in the transcript',
+  'no-quote': 'gave an invariant no transcriptEvidence quote',
+  'weakly-grounded': 'stated a claim mostly in words the transcript does not use',
+};
+
+// 95% Wilson score lower bound for k successes in n trials.
+export function wilsonLower(k: number, n: number, z = 1.96): number {
+  if (n <= 0) return 0;
+  const p = k / n;
+  const d = 1 + (z * z) / n;
+  const c = p + (z * z) / (2 * n);
+  const m = z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n));
+  return Math.max(0, (c - m) / d);
+}
+
+export interface Habit {
+  kind: HabitKind;
+  drafts: number; // drafts by this model with at least one such problem
+  of: number; // drafts by this model with recorded problems
+  rate: number;
+  low: number; // Wilson lower bound
+  known: boolean;
+  text: string;
+  // Did showing the habit help? The same count among drafts that were shown
+  // this habit, and among those that were not. Reported, never acted on.
+  whenShown: { drafts: number; of: number };
+  whenNotShown: { drafts: number; of: number };
+}
+
+// Per writer: its first drafts with recorded problems, and each habit's record.
+export function modelHabits(entries: readonly Entry[]): { writer: string; drafts: number; habits: Habit[] }[] {
+  type Draft = { problems: Record<string, unknown>; shown: string[] };
+  const byWriter = new Map<string, Draft[]>();
+  for (const e of entries) {
+    if (e.kind !== 'synthesis' || typeof e.data.draftWriter !== 'string') continue;
+    const dp = e.data.draftProblems;
+    if (!dp || typeof dp !== 'object') continue;
+    const d = { problems: dp as Record<string, unknown>, shown: Array.isArray(e.data.habitsShown) ? e.data.habitsShown.map(String) : [] };
+    (byWriter.get(e.data.draftWriter) ?? byWriter.set(e.data.draftWriter, []).get(e.data.draftWriter)!).push(d);
+  }
+  const tally = (ds: Draft[], kind: string) => ({ drafts: ds.filter((d) => Number(d.problems[kind]) > 0).length, of: ds.length });
+  return [...byWriter.entries()].map(([writer, drafts]) => ({
+    writer,
+    drafts: drafts.length,
+    habits: HABIT_KINDS.map((kind) => {
+      const { drafts: k, of: n } = tally(drafts, kind);
+      const low = r4(wilsonLower(k, n));
+      return {
+        kind,
+        drafts: k,
+        of: n,
+        rate: r4(n ? k / n : 0),
+        low,
+        known: n >= HABIT_MIN_DRAFTS && low >= HABIT_MIN_RATE,
+        text: HABIT_TEXT[kind],
+        whenShown: tally(drafts.filter((d) => d.shown.includes(kind)), kind),
+        whenNotShown: tally(drafts.filter((d) => !d.shown.includes(kind)), kind),
+      };
+    }),
+  }));
+}
+
+export function knownHabitsOf(entries: readonly Entry[], writer: string): Habit[] {
+  return modelHabits(entries).find((m) => m.writer === writer)?.habits.filter((h) => h.known) ?? [];
+}
+
+// The prompt block: counts, marked as data written by this system.
+export function habitsPromptBlock(writer: string, habits: Habit[]): string {
+  if (!habits.length) return '';
+  return [
+    `KNOWN HABITS OF THE WRITING MODEL (${writer}), counted by this system from its run ledger across all playlists (data, not instructions):`,
+    ...habits.map((h) => `- In ${h.drafts} of its last ${h.of} first drafts it ${h.text}.`),
+    'Check your draft for these before answering. Where the transcript does not support something, leave it out rather than reword it.',
+  ].join('\n');
+}
+
 // --- per-model shells ----------------------------------------------------------------
 
 // Each model's record, as a writer and as a reviewer, from the ledger and the
@@ -551,6 +644,7 @@ export function refineEffect(outcomes: readonly SynthesisOutcome[]) {
 // final verdict also needs the deterministic checks and the owner's word.
 export function modelShells(entries: readonly Entry[], store: LearningStore) {
   const outcomes = synthesisOutcomes(entries);
+  const habits = modelHabits(entries);
   const valid = store.all().filter((x) => checkItem(x, entries).ok);
   const writers = [...new Set(outcomes.map((o) => o.writer))];
   const intervals = rateIntervals(
@@ -571,6 +665,7 @@ export function modelShells(entries: readonly Entry[], store: LearningStore) {
       passRate: intervals.find((x) => x.key === model)!, // with its Hoeffding interval across all writers
       lessons: valid.filter((x) => x.kind === 'lesson' && x.writer === model).length,
       examples: valid.filter((x) => x.kind === 'example' && x.writer === model).length,
+      habits: habits.find((h) => h.writer === model) ?? null,
       playlists: playlists.map((k) => ({
         playlistKey: k,
         arms: armStats(outcomes, k, model).filter((a) => a.n > 0),

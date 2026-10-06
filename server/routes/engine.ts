@@ -4,7 +4,7 @@ import { signedSourceLabel, transcriptSourceFromLedger } from '../transcribe';
 import { MalformedTextError, hashLogic, hashTranscript, watermarkAndCompress } from '../provenance';
 import { changeBetween, logicClaimText, round4, wordOverlap } from '../grounding';
 import { charterSha256 } from '../charter';
-import { chooseArm, chooseWriter, learningPromptBlock, playlistKeyOf, synthesisOutcomes } from '../learning';
+import { HABIT_KINDS, chooseArm, chooseWriter, habitsPromptBlock, knownHabitsOf, learningPromptBlock, playlistKeyOf, synthesisOutcomes } from '../learning';
 import { transcriptBlock } from '../latency';
 import { type CritiqueItem, critiquePrompt, findProblems, findingsSummary, improvePrompt, sanitizeCritique } from '../rci';
 import { Evaluator, MAX_TRANSCRIPT_CHARS, MODEL_CASCADE, NoCharterError, RCL_SCHEMA, callModelJson, callableWriters, charterState, learningStore, normalizeForQuote, raiseSystemConcerns, runGuardShell, runLedger, sanitizeInvariants, sanitizeLogic, sendError, signingKeys } from '../core';
@@ -87,7 +87,9 @@ export function registerEngineRoutes(app: Express) {
       const learned = rclIterations === 'auto' ? chooseArm(outcomesSoFar, playlistKey, writer) : null;
       const iterations = learned ? learned.passes : Math.max(1, Math.min(5, Math.round(Number(rclIterations) || 1)));
       const { lessons, example } = learningStore.select(runLedger.all(), playlistKey, transcriptSha256, writer);
-      const learnedBlock = learningPromptBlock(lessons, example);
+      // The intended writer's known first-draft habits, across all playlists (counts from the ledger).
+      const habits = knownHabitsOf(runLedger.all(), writer);
+      const learnedBlock = [learningPromptBlock(lessons, example), habitsPromptBlock(writer, habits)].filter(Boolean).join('\n\n');
 
       const rounds: {
         cycle: number;
@@ -104,6 +106,8 @@ export function registerEngineRoutes(app: Express) {
       let prevClaims = '';
       let notes = '';
       let stoppedEarly: string | null = null;
+      // Problems the server computed in the first draft, by kind, and who wrote it: what habits are counted from.
+      let draftProblems: Record<string, number> = {};
 
       for (let pass = 1; pass <= iterations; pass++) {
         const header = `${tb.text}
@@ -143,6 +147,7 @@ ${RCL_SCHEMA}`;
         const logicNow = sanitizeLogic(data, pass);
         const claims = logicClaimText(logicNow);
         const problems = findProblems(data, transcript);
+        if (pass === 1) draftProblems = Object.fromEntries(HABIT_KINDS.map((k) => [k, problems.filter((f) => f.kind === k).length]));
         rounds.push({
           cycle: pass,
           focus: pass === 1 ? 'Initial synthesis' : critique ? 'Grounded critique, then fix' : 'Revision against transcript',
@@ -177,6 +182,9 @@ ${RCL_SCHEMA}`;
         passes: iterations,
         passesRun,
         refine,
+        draftWriter: rounds[0].modelUsed,
+        draftProblems,
+        habitsShown: habits.map((h) => h.kind),
         chosenBy: learned ? 'learned' : 'owner',
         // The model whose output became the logic; intendedWriter differs only after a fallback.
         writer: last.modelUsed,
@@ -235,6 +243,7 @@ ${RCL_SCHEMA}`;
             ? `You chose ${writer}.`
             : `${writer}: the first callable model in AETHERSHELL_MODELS.`,
           lessonsUsed: lessons.map((l) => ({ id: l.id, failedChecks: l.failedChecks, writer: l.writer ?? null, reviewer: l.reviewer ?? null })),
+          habitsShown: habits.map(({ kind, drafts, of, low, text }) => ({ kind, drafts, of, low, text })),
           exampleUsed: example ? example.id : null,
           exampleWriter: example?.writer ?? null,
           ledgerSeq: synthEntry.seq,

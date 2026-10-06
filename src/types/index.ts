@@ -140,6 +140,8 @@ export interface SynthesisLearning {
   writerChosenBy: 'learned' | 'owner' | 'default';
   writerWhy: string;
   lessonsUsed: { id: string; failedChecks: string[]; writer: string | null; reviewer: string | null }[];
+  // The writer's known first-draft habits shown in the prompt (counted from the ledger across playlists).
+  habitsShown?: { kind: string; drafts: number; of: number; low: number; text: string }[];
   exampleUsed: string | null;
   exampleWriter: string | null;
   ledgerSeq: number;
