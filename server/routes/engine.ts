@@ -7,7 +7,7 @@ import { charterSha256 } from '../charter';
 import { HABIT_KINDS, chooseArm, chooseWriter, lengthBucketOf, transcriptWords, habitsPromptBlock, knownHabitsOf, learningPromptBlock, playlistKeyOf, synthesisOutcomes } from '../learning';
 import { transcriptBlock } from '../latency';
 import { type CritiqueItem, critiquePrompt, findProblems, findingsSummary, improvePrompt, sanitizeCritique } from '../rci';
-import { Evaluator, MAX_TRANSCRIPT_CHARS, MODEL_CASCADE, NoCharterError, RCL_SCHEMA, callModelJson, callableWriters, charterState, learningStore, normalizeForQuote, raiseSystemConcerns, runGuardShell, runLedger, sanitizeInvariants, sanitizeLogic, sendError, signingKeys } from '../core';
+import { ESCALATE_TO, Evaluator, MAX_TRANSCRIPT_CHARS, escalationTarget, MODEL_CASCADE, NoCharterError, RCL_SCHEMA, callModelJson, callableWriters, charterState, learningStore, normalizeForQuote, raiseSystemConcerns, runGuardShell, runLedger, sanitizeInvariants, sanitizeLogic, sendError, signingKeys } from '../core';
 
 export function registerEngineRoutes(app: Express) {
   // Sign transcript + logic (Ed25519) before compression. The signing key is
@@ -64,7 +64,7 @@ export function registerEngineRoutes(app: Express) {
   // against the transcript. Every number reported is measured, not generated.
   app.post('/api/engine/rcl-ssi-cycle', async (req: Request, res: Response) => {
     try {
-      const { playlist, activeVideo, sessionMemory, rclIterations = 3, userDirectives = '', writer: writerRequest, refine: refineRequest } = req.body || {};
+      const { playlist, activeVideo, sessionMemory, rclIterations = 3, userDirectives = '', writer: writerRequest, refine: refineRequest, escalate: escalateRequest } = req.body || {};
       // How passes after the first refine: 'revise' (one step) or 'rci' (computed problems → critique → fix).
       const refine: 'revise' | 'rci' = refineRequest === 'rci' ? 'rci' : 'revise';
       const transcript: string = activeVideo?.rawTranscript || '';
@@ -82,7 +82,7 @@ export function registerEngineRoutes(app: Express) {
       const writerPick = writerRequest === 'auto' ? chooseWriter(outcomesSoFar, playlistKey, candidates) : null;
       const writer = writerPick?.writer ?? (candidates.includes(writerRequest) ? writerRequest : candidates[0] ?? MODEL_CASCADE[0]);
       const writerChosenBy = writerPick ? 'learned' : candidates.includes(writerRequest) ? 'owner' : 'default';
-      const writeModels = [writer, ...MODEL_CASCADE.filter((m) => m !== writer)];
+      let writeModels = [writer, ...MODEL_CASCADE.filter((m) => m !== writer)];
       // Passes: learned from this writer's own record (over the other models'), or as chosen.
       // Transcript length: the bandit learns pass counts per length bucket.
       const words = transcriptWords(transcript);
@@ -109,10 +109,24 @@ export function registerEngineRoutes(app: Express) {
       let prevClaims = '';
       let notes = '';
       let stoppedEarly: string | null = null;
+      // Escalation: when the writer's own fix pass still leaves computed problems, the
+      // remaining passes go to the configured stronger model (AETHERSHELL_ESCALATE_TO).
+      let escalation: { from: string; to: string; atPass: number; problemsBefore: number } | null = null;
+      let escalationNote: string | null = escalateRequest === true && !ESCALATE_TO.length ? 'Escalation asked for, but AETHERSHELL_ESCALATE_TO is not set.' : null;
       // Problems the server computed in the first draft, by kind, and who wrote it: what habits are counted from.
       let draftProblems: Record<string, number> = {};
 
       for (let pass = 1; pass <= iterations; pass++) {
+        const prev = rounds[rounds.length - 1];
+        if (escalateRequest === true && !escalation && pass >= 3 && prev && prev.cycle >= 2 && prev.problems > 0) {
+          const to = escalationTarget(prev.modelUsed);
+          if (to) {
+            escalation = { from: prev.modelUsed, to, atPass: pass, problemsBefore: prev.problems };
+            writeModels = [to, ...writeModels.filter((m) => m !== to)];
+          } else if (!escalationNote && ESCALATE_TO.length) {
+            escalationNote = `Problems remained after pass ${pass - 1}, but none of ${ESCALATE_TO.join(', ')} can be called now; not escalated.`;
+          }
+        }
         const header = `${tb.text}
 SESSION MEMORY KEYS: ${Object.keys(sessionMemory || {}).slice(0, 30).join(', ') || '(none)'}
 USER DIRECTIVES: ${String(userDirectives).slice(0, 1000) || '(none)'}
@@ -190,6 +204,10 @@ ${RCL_SCHEMA}`;
         draftWriter: rounds[0].modelUsed,
         draftProblems,
         habitsShown: habits.map((h) => h.kind),
+        escalatedFrom: escalation?.from ?? null,
+        escalatedTo: escalation?.to ?? null,
+        escalatedAtPass: escalation?.atPass ?? null,
+        problemsAtEnd: last.problems,
         chosenBy: learned ? 'learned' : 'owner',
         // The model whose output became the logic; intendedWriter differs only after a fallback.
         writer: last.modelUsed,
@@ -209,6 +227,10 @@ ${RCL_SCHEMA}`;
           passesPlanned: iterations,
           refine,
           stoppedEarly,
+          escalation: escalation
+            ? { ...escalation, problemsAfter: last.problems, note: `Moved from ${escalation.from} to ${escalation.to} at pass ${escalation.atPass}: ${escalation.problemsBefore} computed problem(s) remained after the writer's own fix; ${last.problems} remain at the end.` }
+            : null,
+          escalationNote,
           reflexiveFixedPointReached: stabilized,
           groundingScore: last.groundingRatio,
           convergenceRounds: rounds,

@@ -606,6 +606,14 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
               Without: {shadowState.learning.lessonEffect.withoutLessons.passed}/{shadowState.learning.lessonEffect.withoutLessons.n}.
               {' '}{shadowState.learning.lessonEffect.confidence ? `${shadowState.learning.lessonEffect.confidence}.` : ''} Reported, not acted on.
             </p>
+            {shadowState.learning.escalationEffect?.runs > 0 && (
+              <p className="text-slate-400 font-sans">
+                Escalation: {shadowState.learning.escalationEffect.runs} run(s) moved up to a stronger model;{' '}
+                {shadowState.learning.escalationEffect.endedWithoutComputedProblems} ended with no computed problems;{' '}
+                {shadowState.learning.escalationEffect.passed}/{shadowState.learning.escalationEffect.judged} judged passed every guard
+                {' '}({shadowState.learning.escalationEffect.byTarget.map((t: any) => `${t.model}: ${t.passed}/${t.judged}`).join(', ')}). Reported, not acted on.
+              </p>
+            )}
             {shadowState.learning.refineEffect && (
               <p className="text-slate-400 font-sans">
                 Grounded critique (RCI): {shadowState.learning.refineEffect.rci.passed}/{shadowState.learning.refineEffect.rci.n} passed

@@ -30,13 +30,16 @@ const FIXED = {
 };
 
 const prompts: string[] = [];
+const models: string[] = []; // the model each call asked for, in order
 let fake: http.Server;
 let child: ChildProcess | null = null;
 let base = '';
 let log = '';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aether-rci-'));
 
-function reply(prompt: string): unknown {
+// "strong" always fixes; the default model ignores the critique when the run's
+// directives say STUBBORN (so the computed problems remain after its own fix).
+function reply(prompt: string, model = 'fake'): unknown {
   if (prompt.includes('Critique the previous pass')) {
     return {
       critiques: [
@@ -45,7 +48,7 @@ function reply(prompt: string): unknown {
       ],
     };
   }
-  if (prompt.includes('Apply exactly this critique')) return FIXED;
+  if (prompt.includes('Apply exactly this critique')) return model !== 'strong' && prompt.includes('STUBBORN') ? DRAFT : FIXED;
   if (prompt.includes('Revise the previous pass')) return FIXED;
   return DRAFT;
 }
@@ -64,11 +67,13 @@ before(async () => {
     let body = '';
     req.on('data', (d) => (body += d));
     req.on('end', () => {
-      const messages = JSON.parse(body).messages as { content: unknown }[];
+      const parsed = JSON.parse(body);
+      const messages = parsed.messages as { content: unknown }[];
+      models.push(String(parsed.model));
       const prompt = messages.map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content))).join('\n');
       prompts.push(prompt);
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(reply(prompt)) } }] }));
+      res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(reply(prompt, String(parsed.model))) } }] }));
     });
   });
   const fakePort = await freePort();
@@ -82,7 +87,8 @@ before(async () => {
     PORT: String(port),
     HOST: '127.0.0.1',
     LOCAL_LLM_BASE_URL: `http://127.0.0.1:${fakePort}/v1`,
-    AETHERSHELL_MODELS: 'local:fake',
+    AETHERSHELL_MODELS: 'local:fake,local:strong',
+    AETHERSHELL_ESCALATE_TO: 'local:strong',
     AETHERSHELL_CHARTER_PATH: path.join(dir, 'charter.json'),
     AETHERSHELL_LEDGER_PATH: path.join(dir, 'ledger.jsonl'),
     AETHERSHELL_TRANSCRIPTS_PATH: path.join(dir, 'transcripts.jsonl'),
@@ -218,4 +224,52 @@ test('each synthesis records its transcript length, and "auto" passes are chosen
   assert.deepEqual([last.data.lengthBucket, last.data.transcriptWords, last.data.chosenBy], ['short', 18, 'learned']);
   const p = (await (await fetch(`${base}/api/learning`)).json()).learning.playlists.find((x: any) => x.playlistKey === 'playlist:pl-rci');
   assert.deepEqual(p.byLength.map((b: any) => b.bucket), ['short', 'medium', 'long']);
+});
+
+test('escalation: when problems remain after the writer\'s own fix, the remaining passes go to the stronger model', async () => {
+  prompts.length = 0;
+  models.length = 0;
+  const out = await (await cycle({ rclIterations: 4, refine: 'rci', escalate: true, userDirectives: 'STUBBORN' })).json();
+  const r = out.rclResult;
+  assert.deepEqual(
+    r.convergenceRounds.map((x: any) => [x.cycle, x.modelUsed, x.problems]),
+    [
+      [1, 'local:fake', 2],
+      [2, 'local:fake', 2], // its own fix left both problems
+      [3, 'local:strong', 0],
+    ]
+  );
+  assert.equal(r.stoppedEarly, 'Stopped after pass 3: no computed problems left to criticise.');
+  assert.deepEqual(
+    { ...r.escalation, note: undefined },
+    { from: 'local:fake', to: 'local:strong', atPass: 3, problemsBefore: 2, problemsAfter: 0, note: undefined }
+  );
+  assert.match(r.escalation.note, /^Moved from local:fake to local:strong at pass 3/);
+  // draft, critique, fix by the writer; critique and fix by the stronger model.
+  assert.deepEqual(models, ['fake', 'fake', 'fake', 'strong', 'strong']);
+
+  const entries = (await (await fetch(`${base}/api/ledger/entries`)).json()).entries;
+  const last = entries.filter((e: any) => e.kind === 'synthesis').at(-1);
+  assert.deepEqual(
+    [last.data.draftWriter, last.data.writer, last.data.escalatedFrom, last.data.escalatedTo, last.data.escalatedAtPass, last.data.problemsAtEnd],
+    ['local:fake', 'local:strong', 'local:fake', 'local:strong', 3, 0]
+  );
+});
+
+test('escalation: no move when the writer fixes its own problems, or with too few passes', async () => {
+  models.length = 0;
+  const fixed = (await (await cycle({ rclIterations: 3, refine: 'rci', escalate: true })).json()).rclResult;
+  assert.equal(fixed.escalation, null);
+  assert.equal(fixed.iterationCount, 2);
+  assert.ok(models.every((m) => m === 'fake'));
+
+  models.length = 0;
+  const two = (await (await cycle({ rclIterations: 2, refine: 'rci', escalate: true, userDirectives: 'STUBBORN' })).json()).rclResult;
+  assert.equal(two.escalation, null); // pass 3 never comes
+  assert.ok(models.every((m) => m === 'fake'));
+
+  const models_ = await (await fetch(`${base}/api/models`)).json();
+  assert.deepEqual(models_.escalateTo, ['local:strong']);
+  const e = (await (await fetch(`${base}/api/learning`)).json()).learning.escalationEffect;
+  assert.deepEqual([e.runs, e.endedWithoutComputedProblems, e.byTarget[0].model], [1, 1, 'local:strong']);
 });

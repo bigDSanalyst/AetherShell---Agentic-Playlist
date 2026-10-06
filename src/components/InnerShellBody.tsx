@@ -31,6 +31,7 @@ import {
   SotaReflexiveInvariant,
 } from '../types';
 import { executeInnershellScript } from '../utils/crypto';
+import { fetchModels } from '../services/api';
 import { copyText } from '../utils/clipboard';
 
 interface InnerShellBodyProps {
@@ -39,7 +40,7 @@ interface InnerShellBodyProps {
   activeVideo: VideoNode | null;
   sessionMemory: PersistentSessionMemory;
   onUpdateSessionMemory: (newMemory: Record<string, any>) => void;
-  onRunRclSsi: (iterations: number | 'auto', directives: string, writer?: string, refine?: 'revise' | 'rci') => void;
+  onRunRclSsi: (iterations: number | 'auto', directives: string, writer?: string, refine?: 'revise' | 'rci', escalate?: boolean) => void;
   isLoading: boolean;
   onProceedToCrypto: () => void;
   lastExecutionResult: ScriptExecutionResult | null;
@@ -67,6 +68,14 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
   const [autoWriter, setAutoWriter] = useState(false);
   // Grounded critique (RCI): each refinement pass first criticises the problems the server computed.
   const [rci, setRci] = useState(false);
+  // Move up to the configured stronger model (AETHERSHELL_ESCALATE_TO) when problems remain.
+  const [escalate, setEscalate] = useState(false);
+  const [escalateTo, setEscalateTo] = useState<string[]>([]);
+  React.useEffect(() => {
+    fetchModels()
+      .then((m) => setEscalateTo(m.escalateTo ?? []))
+      .catch(() => setEscalateTo([]));
+  }, []);
   const [userDirectives, setUserDirectives] = useState('');
   const [isExecutingScript, setIsExecutingScript] = useState(false);
   const [customScriptCode, setCustomScriptCode] = useState<string>('');
@@ -211,6 +220,17 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
               <input type="checkbox" checked={rci} onChange={(e) => setRci(e.target.checked)} className="accent-emerald-400" />
               Grounded critique (RCI): criticise computed problems, then fix
             </label>
+            <label
+              className={`flex items-center gap-1.5 text-[10px] font-mono cursor-pointer ${escalateTo.length ? 'text-slate-400' : 'text-slate-600'}`}
+              title={
+                escalateTo.length
+                  ? `If computed problems are still there after the writer's own fix pass, the remaining passes go to ${escalateTo.join(' or ')}. Needs 3 or more passes.`
+                  : 'Set AETHERSHELL_ESCALATE_TO on the server to name a stronger model.'
+              }
+            >
+              <input type="checkbox" checked={escalate} disabled={!escalateTo.length} onChange={(e) => setEscalate(e.target.checked)} className="accent-emerald-400" />
+              {escalateTo.length ? `Escalate to ${escalateTo[0]} if problems remain` : 'Escalation: no stronger model configured'}
+            </label>
           </div>
 
           <div className="md:col-span-6 space-y-1">
@@ -228,7 +248,7 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
 
           <div className="md:col-span-3">
             <button
-              onClick={() => onRunRclSsi(autoPasses ? 'auto' : rclIterations, userDirectives, autoWriter ? 'auto' : undefined, rci ? 'rci' : 'revise')}
+              onClick={() => onRunRclSsi(autoPasses ? 'auto' : rclIterations, userDirectives, autoWriter ? 'auto' : undefined, rci ? 'rci' : 'revise', escalate)}
               disabled={isLoading || !activeVideo?.rawTranscript}
               className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-slate-950 font-bold text-xs font-mono transition-all shadow-md shadow-cyan-500/20 disabled:opacity-50 flex items-center justify-center gap-2"
             >
@@ -308,6 +328,8 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
                       ))}
                     </div>
                     {rclAnalysis.stoppedEarly && <div className="text-emerald-400 text-[10px]">{rclAnalysis.stoppedEarly}</div>}
+                    {rclAnalysis.escalation && <div className="text-indigo-300 text-[10px]">{rclAnalysis.escalation.note}</div>}
+                    {rclAnalysis.escalationNote && <div className="text-amber-400 text-[10px]">{rclAnalysis.escalationNote}</div>}
                     {rclAnalysis.convergenceRounds
                       .filter((rnd) => rnd.critique?.length)
                       .map((rnd) => (

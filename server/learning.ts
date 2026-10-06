@@ -84,6 +84,8 @@ export interface SynthesisOutcome {
   refine: 'revise' | 'rci'; // how passes after the first refined (older entries: revise)
   passesRun: number; // fewer than passes when RCI stopped early
   lengthBucket: LengthBucket | null; // null for entries from before lengths were recorded
+  escalatedTo: string | null; // the stronger model the run moved up to, if it did
+  problemsAtEnd: number | null; // computed problems left in the final pass (null: not recorded)
   verdicts: { seq: number; evaluator: string; reviewer: string | null; passed: boolean; overridden: boolean }[];
   // 1 = every verdict that judged it passed, 0 = at least one failed, null = not judged yet.
   reward: 0 | 1 | null;
@@ -120,6 +122,8 @@ export function synthesisOutcomes(entries: readonly Entry[]): SynthesisOutcome[]
       refine: s.data.refine === 'rci' ? 'rci' : 'revise',
       passesRun: Number.isFinite(s.data.passesRun) ? Number(s.data.passesRun) : Number(s.data.passes),
       lengthBucket: (LENGTH_BUCKETS as readonly unknown[]).includes(s.data.lengthBucket) ? (s.data.lengthBucket as LengthBucket) : null,
+      escalatedTo: typeof s.data.escalatedTo === 'string' ? s.data.escalatedTo : null,
+      problemsAtEnd: Number.isFinite(s.data.problemsAtEnd) ? Number(s.data.problemsAtEnd) : null,
       verdicts,
       reward: verdicts.length === 0 ? null : verdicts.every((v) => v.passed) ? 1 : 0,
     });
@@ -660,6 +664,25 @@ export function habitsPromptBlock(writer: string, habits: Habit[]): string {
     ...habits.map((h) => `- In ${h.drafts} of its last ${h.of} first drafts it ${h.text}.`),
     'Check your draft for these before answering. Where the transcript does not support something, leave it out rather than reword it.',
   ].join('\n');
+}
+
+// Escalation: runs that moved up to a stronger model mid-run, how many ended with
+// no computed problems, and how the guards judged them. Reported, never acted on.
+export function escalationEffect(outcomes: readonly SynthesisOutcome[]) {
+  const up = outcomes.filter((o) => o.escalatedTo !== null);
+  const judged = up.filter((o) => o.reward !== null);
+  const to = [...new Set(up.map((o) => o.escalatedTo as string))];
+  return {
+    runs: up.length,
+    endedWithoutComputedProblems: up.filter((o) => o.problemsAtEnd === 0).length,
+    judged: judged.length,
+    passed: judged.filter((o) => o.reward === 1).length,
+    byTarget: to.map((m) => {
+      const mine = up.filter((o) => o.escalatedTo === m);
+      const j = mine.filter((o) => o.reward !== null);
+      return { model: m, runs: mine.length, judged: j.length, passed: j.filter((o) => o.reward === 1).length };
+    }),
+  };
 }
 
 // --- per-model shells ----------------------------------------------------------------
