@@ -176,3 +176,34 @@ test('the twin reports RCI against plain revision, and the ledger still verifies
   assert.equal(learning.syntheses, 2);
   assert.equal((await (await fetch(`${base}/api/ledger/verify`)).json()).ok, true);
 });
+
+test('known habits: after 5 first drafts with an invented quote, the 6th draft is shown that habit', async () => {
+  // Two drafts so far (the tests above), both by local:fake with an invented quote.
+  for (let i = 0; i < 2; i++) assert.equal((await cycle({ rclIterations: 1 })).status, 200);
+  prompts.length = 0;
+  const before = await (await cycle({ rclIterations: 1 })).json(); // the 5th draft: habit not yet known
+  assert.deepEqual(before.learning.habitsShown, []);
+  assert.doesNotMatch(prompts[0], /KNOWN HABITS/);
+
+  prompts.length = 0;
+  const out = await (await cycle({ rclIterations: 1 })).json();
+  assert.deepEqual(
+    out.learning.habitsShown.map((h: any) => [h.kind, h.drafts, h.of]),
+    [
+      ['quote-not-found', 5, 5],
+      ['weakly-grounded', 5, 5],
+    ]
+  );
+  assert.match(prompts[0], /KNOWN HABITS OF THE WRITING MODEL \(local:fake\)/);
+  assert.match(prompts[0], /In 5 of its last 5 first drafts it gave an invariant a transcriptEvidence quote that is not in the transcript\./);
+
+  const entries = (await (await fetch(`${base}/api/ledger/entries`)).json()).entries;
+  const last = entries.filter((e: any) => e.kind === 'synthesis').at(-1);
+  assert.equal(last.data.draftWriter, 'local:fake');
+  assert.deepEqual(last.data.draftProblems, { 'quote-not-found': 1, 'no-quote': 0, 'weakly-grounded': 1 });
+  assert.deepEqual(last.data.habitsShown, ['quote-not-found', 'weakly-grounded']);
+
+  const shell = (await (await fetch(`${base}/api/learning`)).json()).learning.shells.asWriter.find((m: any) => m.model === 'local:fake');
+  const q = shell.habits.habits.find((h: any) => h.kind === 'quote-not-found');
+  assert.deepEqual([q.drafts, q.of, q.known, q.whenShown, q.whenNotShown], [6, 6, true, { drafts: 1, of: 1 }, { drafts: 5, of: 5 }]);
+});

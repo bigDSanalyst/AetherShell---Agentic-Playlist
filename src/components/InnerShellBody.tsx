@@ -450,6 +450,14 @@ export const InnerShellBody: React.FC<InnerShellBodyProps> = ({
                       ) : (
                         <div>No lessons yet for this material.</div>
                       )}
+                      {rclAnalysis.learning.habitsShown?.length ? (
+                        <div className="text-amber-300">
+                          Known habits of {rclAnalysis.learning.intendedWriter ?? rclAnalysis.learning.writer}, shown to it:{' '}
+                          {rclAnalysis.learning.habitsShown.map((h) => `${h.text} (${h.drafts}/${h.of} first drafts)`).join('; ')}.
+                        </div>
+                      ) : (
+                        <div>No known habits for this model yet (needs at least 5 recorded first drafts).</div>
+                      )}
                       <div>
                         {rclAnalysis.learning.exampleUsed
                           ? `Shown passed example ${rclAnalysis.learning.exampleUsed} (written by ${rclAnalysis.learning.exampleWriter ?? 'unrecorded'}) as a grounding standard.`

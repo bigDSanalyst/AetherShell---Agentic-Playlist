@@ -642,6 +642,20 @@ export const AetherTwinParallel: React.FC<AetherTwinParallelProps> = ({
                         . Own lessons {m.lessons}, own examples {m.examples}.
                         {r ? ` As reviewer: ${r.verdicts} verdict(s), approved ${r.approved}${r.reviewedOwnWriting ? `, ${r.reviewedOwnWriting} on its own writing` : ''}.` : ''}
                       </div>
+                      {m.habits && (
+                        <div className="text-slate-400 font-sans text-[11px]">
+                          First drafts recorded: {m.habits.drafts}.{' '}
+                          {m.habits.habits
+                            .filter((h: any) => h.drafts > 0)
+                            .map((h: any) => (
+                              <span key={h.kind} className={h.known ? 'text-amber-300' : ''}>
+                                {h.kind} {h.drafts}/{h.of}
+                                {h.known ? ' (known habit)' : ''}
+                                {h.whenShown.of ? `; when shown ${h.whenShown.drafts}/${h.whenShown.of}, not shown ${h.whenNotShown.drafts}/${h.whenNotShown.of}` : ''}.{' '}
+                              </span>
+                            ))}
+                        </div>
+                      )}
                       {m.playlists.map((p: any) => (
                         <div key={p.playlistKey} className="text-emerald-300/90 font-sans text-[11px]">
                           {p.playlistKey}: next "auto" passes: {p.next.passes}
