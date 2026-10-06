@@ -133,6 +133,8 @@ export interface RclCritiqueItem {
 export interface SynthesisLearning {
   playlistKey: string;
   passes: number;
+  lengthBucket?: 'short' | 'medium' | 'long'; // the transcript's length bucket (the bandit learns per bucket)
+  transcriptWords?: number;
   chosenBy: 'learned' | 'owner';
   why: string;
   writer: string; // the model whose output became the logic
