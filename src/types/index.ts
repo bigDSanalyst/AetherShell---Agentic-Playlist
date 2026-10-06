@@ -110,6 +110,23 @@ export interface RclConvergenceRound {
   changeFromPrevious: number; // 1 - Jaccard similarity of content words vs the previous pass
   groundingRatio: number; // share of the pass's content words that appear in the transcript
   modelUsed: string;
+  problems?: number; // computed problems in this pass's output (server/rci.ts)
+  problemSummary?: string;
+  critique?: RclCritiqueItem[]; // grounded critique (RCI) this pass applied
+  critiqueModel?: string;
+}
+
+// One computed problem and the model's verdict on it (server/rci.ts).
+export interface RclCritiqueItem {
+  id: string;
+  kind: 'quote-not-found' | 'no-quote' | 'weakly-grounded';
+  where: string;
+  text: string;
+  detail: string;
+  verdict: 'remove' | 'rewrite' | 'requote' | 'keep';
+  reason: string;
+  transcriptQuote: string;
+  quoteFound: boolean; // computed: is the cited quote really in the transcript?
 }
 
 // How AetherTwin's learning shaped one synthesis (server/learning.ts).
@@ -129,7 +146,10 @@ export interface SynthesisLearning {
 }
 
 export interface RclAnalysis {
-  iterationCount: number;
+  iterationCount: number; // passes actually run
+  passesPlanned?: number;
+  refine?: 'revise' | 'rci';
+  stoppedEarly?: string | null;
   learning?: SynthesisLearning;
   extractedInvariants: string[];
   sotaReflexiveInvariants?: SotaReflexiveInvariant[];

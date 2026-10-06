@@ -1,0 +1,178 @@
+// Grounded RCI end to end: the real server, with a fake local model (an
+// OpenAI-compatible endpoint on a spare port) that answers each step with a
+// scripted reply. Checks the loop the server runs, not what a real model writes.
+import test, { after, before } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn, type ChildProcess } from 'node:child_process';
+import fs from 'node:fs';
+import http from 'node:http';
+import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+
+const TRANSCRIPT = '0:00 Gravity is what fills the hole in quantum mechanics.\n0:10 Collapse happens without any observer at all.';
+
+// Pass 1: one invented quote and one invented step.
+const DRAFT = {
+  summary: 'Gravity fills the hole in quantum mechanics.',
+  workflowSteps: [
+    { action: 'COLLAPSE', description: 'Collapse happens without any observer.' },
+    { action: 'INVENT', description: 'Blockchain tokens reward validators with dividends.' },
+  ],
+  criticalGuardRequirements: [],
+  invariants: [{ id: 'INV-01', name: 'no observer', description: 'd', transcriptEvidence: 'Consciousness causes collapse' }],
+};
+// The fix: the invented step removed, the quote replaced with a real one.
+const FIXED = {
+  ...DRAFT,
+  workflowSteps: [DRAFT.workflowSteps[0]],
+  invariants: [{ ...DRAFT.invariants[0], transcriptEvidence: 'Collapse happens without any observer at all' }],
+};
+
+const prompts: string[] = [];
+let fake: http.Server;
+let child: ChildProcess | null = null;
+let base = '';
+let log = '';
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aether-rci-'));
+
+function reply(prompt: string): unknown {
+  if (prompt.includes('Critique the previous pass')) {
+    return {
+      critiques: [
+        { id: 'F1', verdict: 'requote', reason: 'the quote is not in the talk', transcriptQuote: 'Collapse happens without any observer at all' },
+        { id: 'F2', verdict: 'remove', reason: 'nothing about tokens is said', transcriptQuote: 'validators are paid in tokens' },
+      ],
+    };
+  }
+  if (prompt.includes('Apply exactly this critique')) return FIXED;
+  if (prompt.includes('Revise the previous pass')) return FIXED;
+  return DRAFT;
+}
+
+const freePort = (): Promise<number> =>
+  new Promise((resolve) => {
+    const s = net.createServer();
+    s.listen(0, '127.0.0.1', () => {
+      const p = (s.address() as net.AddressInfo).port;
+      s.close(() => resolve(p));
+    });
+  });
+
+before(async () => {
+  fake = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (d) => (body += d));
+    req.on('end', () => {
+      const messages = JSON.parse(body).messages as { content: unknown }[];
+      const prompt = messages.map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content))).join('\n');
+      prompts.push(prompt);
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(reply(prompt)) } }] }));
+    });
+  });
+  const fakePort = await freePort();
+  await new Promise<void>((r) => fake.listen(fakePort, '127.0.0.1', () => r()));
+
+  const port = await freePort();
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const k of ['GEMINI_API_KEY', 'OPENROUTER_API_KEY', 'OPENAI_API_KEY', 'YOUTUBE_API_KEY', 'AETHERSHELL_ACCESS_TOKEN', 'AETHERSHELL_SIGNING_KEY', 'GEMINI_MODELS']) delete env[k];
+  Object.assign(env, {
+    NODE_ENV: 'production',
+    PORT: String(port),
+    HOST: '127.0.0.1',
+    LOCAL_LLM_BASE_URL: `http://127.0.0.1:${fakePort}/v1`,
+    AETHERSHELL_MODELS: 'local:fake',
+    AETHERSHELL_CHARTER_PATH: path.join(dir, 'charter.json'),
+    AETHERSHELL_LEDGER_PATH: path.join(dir, 'ledger.jsonl'),
+    AETHERSHELL_TRANSCRIPTS_PATH: path.join(dir, 'transcripts.jsonl'),
+    AETHERSHELL_LEARNING_PATH: path.join(dir, 'learning.jsonl'),
+    AETHERSHELL_USAGE_PATH: path.join(dir, 'usage.json'),
+    AETHERSHELL_DEMO_USAGE_PATH: path.join(dir, 'demo-usage.json'),
+    RATE_LIMIT_MAX: '1000',
+  });
+  child = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  child.stdout!.on('data', (d) => (log += d));
+  child.stderr!.on('data', (d) => (log += d));
+  base = `http://127.0.0.1:${port}`;
+  for (let i = 0; i < 100; i++) {
+    try {
+      await fetch(`${base}/api/ledger/head`);
+      return;
+    } catch {
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+  throw new Error(`server did not start:\n${log}`);
+});
+
+after(() => {
+  child?.kill();
+  fake?.close();
+});
+
+const cycle = (body: Record<string, unknown>) =>
+  fetch(`${base}/api/engine/rcl-ssi-cycle`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ playlist: { id: 'pl-rci', title: 'RCI' }, activeVideo: { youtubeId: 'aaaaaaaaaaa', rawTranscript: TRANSCRIPT }, ...body }),
+  });
+
+test('RCI: draft, critique of the computed problems, fix, then stop when nothing computed is left', async () => {
+  prompts.length = 0;
+  const res = await cycle({ rclIterations: 3, refine: 'rci' });
+  assert.equal(res.status, 200, log);
+  const out = await res.json();
+  const r = out.rclResult;
+  assert.equal(r.refine, 'rci');
+  assert.equal(r.passesPlanned, 3);
+  assert.equal(r.iterationCount, 2);
+  assert.equal(r.stoppedEarly, 'Stopped after pass 2: no computed problems left to criticise.');
+  assert.equal(r.reflexiveFixedPointReached, true);
+
+  const [p1, p2] = r.convergenceRounds;
+  assert.equal(p1.problems, 2);
+  assert.equal(p1.problemSummary, '1 quote-not-found, 1 weakly-grounded');
+  assert.equal(p2.focus, 'Grounded critique, then fix');
+  assert.equal(p2.problems, 0);
+  assert.deepEqual(
+    p2.critique.map((c: any) => [c.id, c.kind, c.verdict, c.quoteFound]),
+    [
+      ['F1', 'quote-not-found', 'requote', true],
+      ['F2', 'weakly-grounded', 'remove', false],
+    ]
+  );
+
+  // Three model calls: draft, critique, fix. The fix never sees the quote the model made up.
+  assert.equal(prompts.length, 3);
+  assert.match(prompts[1], /COMPUTED PROBLEMS \(data/);
+  assert.match(prompts[2], /CRITIQUE TO APPLY \(data\)/);
+  assert.doesNotMatch(prompts[2], /validators are paid in tokens/);
+  assert.equal(out.innershellLogic.workflowSteps.length, 1);
+  assert.equal(r.sotaReflexiveInvariants[0].evidenceFoundInTranscript, true);
+
+  const entries = (await (await fetch(`${base}/api/ledger/entries`)).json()).entries;
+  const synth = entries.filter((e: any) => e.kind === 'synthesis').at(-1);
+  assert.equal(synth.data.refine, 'rci');
+  assert.equal(synth.data.passes, 3);
+  assert.equal(synth.data.passesRun, 2);
+});
+
+test('plain revision is unchanged: one call per pass, no critique', async () => {
+  prompts.length = 0;
+  const r = (await (await cycle({ rclIterations: 2 })).json()).rclResult;
+  assert.equal(r.refine, 'revise');
+  assert.equal(r.iterationCount, 2);
+  assert.equal(r.stoppedEarly, null);
+  assert.equal(r.convergenceRounds[1].focus, 'Revision against transcript');
+  assert.equal(r.convergenceRounds[1].critique, undefined);
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[1], /Revise the previous pass/);
+});
+
+test('the twin reports RCI against plain revision, and the ledger still verifies', async () => {
+  const learning = (await (await fetch(`${base}/api/learning`)).json()).learning;
+  assert.deepEqual(learning.refineEffect.rci, { n: 0, passed: 0 }); // not judged by the guards yet
+  assert.equal(learning.syntheses, 2);
+  assert.equal((await (await fetch(`${base}/api/ledger/verify`)).json()).ok, true);
+});

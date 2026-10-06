@@ -6,6 +6,7 @@ import { changeBetween, logicClaimText, round4, wordOverlap } from '../grounding
 import { charterSha256 } from '../charter';
 import { chooseArm, chooseWriter, learningPromptBlock, playlistKeyOf, synthesisOutcomes } from '../learning';
 import { transcriptBlock } from '../latency';
+import { type CritiqueItem, critiquePrompt, findProblems, findingsSummary, improvePrompt, sanitizeCritique } from '../rci';
 import { Evaluator, MAX_TRANSCRIPT_CHARS, MODEL_CASCADE, NoCharterError, RCL_SCHEMA, callModelJson, callableWriters, charterState, learningStore, normalizeForQuote, raiseSystemConcerns, runGuardShell, runLedger, sanitizeInvariants, sanitizeLogic, sendError, signingKeys } from '../core';
 
 export function registerEngineRoutes(app: Express) {
@@ -63,7 +64,9 @@ export function registerEngineRoutes(app: Express) {
   // against the transcript. Every number reported is measured, not generated.
   app.post('/api/engine/rcl-ssi-cycle', async (req: Request, res: Response) => {
     try {
-      const { playlist, activeVideo, sessionMemory, rclIterations = 3, userDirectives = '', writer: writerRequest } = req.body || {};
+      const { playlist, activeVideo, sessionMemory, rclIterations = 3, userDirectives = '', writer: writerRequest, refine: refineRequest } = req.body || {};
+      // How passes after the first refine: 'revise' (one step) or 'rci' (computed problems → critique → fix).
+      const refine: 'revise' | 'rci' = refineRequest === 'rci' ? 'rci' : 'revise';
       const transcript: string = activeVideo?.rawTranscript || '';
       if (!transcript.trim()) {
         return res.status(400).json({ error: 'activeVideo.rawTranscript is required' });
@@ -86,18 +89,43 @@ export function registerEngineRoutes(app: Express) {
       const { lessons, example } = learningStore.select(runLedger.all(), playlistKey, transcriptSha256, writer);
       const learnedBlock = learningPromptBlock(lessons, example);
 
-      const rounds: { cycle: number; focus: string; changeFromPrevious: number; groundingRatio: number; modelUsed: string }[] = [];
+      const rounds: {
+        cycle: number;
+        focus: string;
+        changeFromPrevious: number;
+        groundingRatio: number;
+        modelUsed: string;
+        problems: number; // computed problems in this pass's output (server/rci.ts)
+        problemSummary: string;
+        critique?: CritiqueItem[]; // RCI only: the critique this pass applied
+        critiqueModel?: string;
+      }[] = [];
       let current: any = null;
       let prevClaims = '';
       let notes = '';
+      let stoppedEarly: string | null = null;
 
       for (let pass = 1; pass <= iterations; pass++) {
         const header = `${tb.text}
 SESSION MEMORY KEYS: ${Object.keys(sessionMemory || {}).slice(0, 30).join(', ') || '(none)'}
 USER DIRECTIVES: ${String(userDirectives).slice(0, 1000) || '(none)'}
 ${learnedBlock ? `\n${learnedBlock}\n` : ''}`;
-        const prompt =
-          pass === 1
+        // RCI: criticise the previous pass from its computed problems; nothing computed, nothing to fix.
+        let critique: CritiqueItem[] | undefined;
+        let critiqueModel: string | undefined;
+        if (refine === 'rci' && pass > 1) {
+          const findings = findProblems(current, transcript);
+          if (!findings.length) {
+            stoppedEarly = `Stopped after pass ${pass - 1}: no computed problems left to criticise.`;
+            break;
+          }
+          const c = await callModelJson({ contents: critiquePrompt(header, current, findings), taskName: `rcl-critique-${pass}`, models: writeModels });
+          critique = sanitizeCritique(c.data, findings, transcript);
+          critiqueModel = c.modelUsed;
+        }
+        const prompt = critique
+          ? improvePrompt(header, current, critique, RCL_SCHEMA)
+          : pass === 1
             ? `${header}
 Derive an execution plan and a small set of invariants from this transcript only. Every claim must be supported by the transcript; quote it in transcriptEvidence. Do not invent metrics or numbers.
 Return JSON matching:
@@ -114,18 +142,23 @@ ${RCL_SCHEMA}`;
         current = data;
         const logicNow = sanitizeLogic(data, pass);
         const claims = logicClaimText(logicNow);
+        const problems = findProblems(data, transcript);
         rounds.push({
           cycle: pass,
-          focus: pass === 1 ? 'Initial synthesis' : 'Revision against transcript',
+          focus: pass === 1 ? 'Initial synthesis' : critique ? 'Grounded critique, then fix' : 'Revision against transcript',
           changeFromPrevious: pass === 1 ? 1 : round4(changeBetween(prevClaims, claims)),
           groundingRatio: round4(wordOverlap(claims, transcript).ratio),
           modelUsed,
+          problems: problems.length,
+          problemSummary: findingsSummary(problems),
+          ...(critique ? { critique, critiqueModel } : {}),
         });
         prevClaims = claims;
         notes = String(data?.notes || notes);
       }
 
-      const innershellLogic = sanitizeLogic(current, iterations);
+      const passesRun = rounds.length;
+      const innershellLogic = sanitizeLogic(current, passesRun);
       const invariants = sanitizeInvariants(current?.invariants).map((inv) => ({
         ...inv,
         evidenceFoundInTranscript: inv.transcriptEvidence
@@ -133,7 +166,7 @@ ${RCL_SCHEMA}`;
           : false,
       }));
       const last = rounds[rounds.length - 1];
-      const stabilized = iterations > 1 && last.changeFromPrevious <= 0.1;
+      const stabilized = (passesRun > 1 && last.changeFromPrevious <= 0.1) || (stoppedEarly !== null && last.problems === 0);
 
       // Record the synthesis so guard verdicts on it can be attributed to how it was made.
       const synthEntry = runLedger.append('synthesis', {
@@ -142,6 +175,8 @@ ${RCL_SCHEMA}`;
         transcriptSource: transcriptSourceFromLedger(runLedger.all(), transcriptSha256).source,
         logicSha256: hashLogic(innershellLogic),
         passes: iterations,
+        passesRun,
+        refine,
         chosenBy: learned ? 'learned' : 'owner',
         // The model whose output became the logic; intendedWriter differs only after a fallback.
         writer: last.modelUsed,
@@ -157,7 +192,10 @@ ${RCL_SCHEMA}`;
       res.json({
         success: true,
         rclResult: {
-          iterationCount: iterations,
+          iterationCount: passesRun,
+          passesPlanned: iterations,
+          refine,
+          stoppedEarly,
           reflexiveFixedPointReached: stabilized,
           groundingScore: last.groundingRatio,
           convergenceRounds: rounds,
@@ -166,7 +204,9 @@ ${RCL_SCHEMA}`;
           reflexiveFeedbackNotes:
             (notes ? notes + ' ' : '') +
             `Measured: final pass shares ${Math.round(last.groundingRatio * 100)}% of its content words with the transcript` +
-            (iterations > 1 ? `; it changed ${Math.round(last.changeFromPrevious * 100)}% from the previous pass.` : '.'),
+            (passesRun > 1 ? `; it changed ${Math.round(last.changeFromPrevious * 100)}% from the previous pass` : '') +
+            `; computed problems left: ${last.problemSummary}.` +
+            (stoppedEarly ? ` ${stoppedEarly}` : ''),
           ssiInjectedState: {
             activeContextWindow: tb.included,
             contextWindowUnit: 'characters',

@@ -380,6 +380,7 @@ export async function runRclSsiCycle(params: {
   rclIterations?: number | 'auto';
   userDirectives?: string;
   writer?: string; // a model ref, 'auto' (AetherTwin chooses), or omitted (first configured)
+  refine?: 'revise' | 'rci'; // how passes after the first refine
 }): Promise<{
   rclResult: RclAnalysis;
   innershellLogic: InnershellLogic;

@@ -83,3 +83,9 @@ export function changeBetween(a: string, b: string): number {
 export function round4(n: number): number {
   return Number(n.toFixed(4));
 }
+
+// Lowercase, punctuation to spaces: a quote counts as found when this form of it
+// appears in this form of the source.
+export function normalizeForQuote(text: string): string {
+  return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}

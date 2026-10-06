@@ -17,7 +17,7 @@ import { ExchangeError, concerns as exchangeConcerns, systemConcernsFromRecord }
 import { RunLedger, type LedgerEntry } from './runLedger';
 import { GeminiUsage, classifyGeminiError, formatDuration, secondsUntilReset } from './geminiUsage';
 import { configuredProviders, modelCascade, openAICompatibleGenerate, parseModelRef, toChatMessages } from './models';
-import { LearningStore, chooseArm, chooseWriter, lessonEffect, lessonEffectConfidence, modelShells, synthesisOutcomes, armStats } from './learning';
+import { LearningStore, chooseArm, chooseWriter, lessonEffect, lessonEffectConfidence, modelShells, refineEffect, synthesisOutcomes, armStats } from './learning';
 import { ledgerDrift } from './eprocess';
 import { TranscriptArchive, retryDelaySeconds } from './transcriptArchive';
 import { buildCorpus } from './corpus';
@@ -220,6 +220,7 @@ export function learningReport(playlistKey?: string) {
     passed: outcomes.filter((o) => o.reward === 1).length,
     ...learningStore.report(entries),
     lessonEffect: { ...lessonEffect(outcomes), confidence: lessonEffectConfidence(outcomes).statement },
+    refineEffect: refineEffect(outcomes),
     playlists: keys.map((k) => ({
       playlistKey: k,
       syntheses: outcomes.filter((o) => o.playlistKey === k).length,
@@ -435,9 +436,7 @@ export function sendError(res: Response, err: any, fallbackMessage: string) {
   return res.status(500).json({ error: redactKey(String(err?.message || fallbackMessage)) });
 }
 
-export function normalizeForQuote(text: string): string {
-  return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
-}
+export { normalizeForQuote } from './grounding';
 
 // ---------------------------------------------------------------------------
 // RCL/SSI: invariants may only reference these built-in, deterministic checks.

@@ -64,6 +64,7 @@ Run lint and tests before every commit.
 | Owner ⇄ system exchange (concerns, answers, overrides) | `server/exchange.ts`, `src/components/ExchangePanel.tsx` |
 | Run ledger, Merkle head/proofs | `server/runLedger.ts` |
 | Learning: lessons, examples, pass-count bandit, per-model shells and writer choice (never touches the charter) | `server/learning.ts` |
+| Grounded critique (RCI) for RCL refinement: computed problems → critique → fix; a writing aid, not a guard | `server/rci.ts`, loop in `server/routes/engine.ts` |
 | Drift monitor (e-process) | `server/eprocess.ts` |
 | Deployment self-check | `server/doctor.ts`, `scripts/doctor.ts` |
 | YouTube captions / playlists | `server/youtube.ts` |
