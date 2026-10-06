@@ -47,10 +47,16 @@ export const VISITOR_POSTS = ['/api/transcripts/collection', '/api/auth/verify-t
 // pasted transcripts, the charter, owner answers in the exchange, the twin, and
 // GitHub guard imports. A visitor must not be able to get arbitrary text signed
 // with this server's key or write to its ledger outside the demo AI calls.
+// Reads that are the owner's alone: the whole transcript archive in one file,
+// and the deployment self-check (which names configuration and file paths).
+// The ledger stays readable: it is the public evidence.
+export const OWNER_ONLY_READS = ['/api/transcripts/export', '/api/doctor'];
+
 export function isVisitorAllowed(method: string, reqPath: string): 'ai' | 'read' | 'owner-only' {
   const norm = reqPath.split('?')[0];
   const withApi = norm.startsWith('/api') ? norm : `/api${norm.startsWith('/') ? '' : '/'}${norm}`;
   if (isAiQuotaPath(withApi)) return 'ai';
+  if (OWNER_ONLY_READS.includes(withApi)) return 'owner-only';
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return 'read';
   if (VISITOR_POSTS.includes(withApi)) return 'read';
   return 'owner-only';

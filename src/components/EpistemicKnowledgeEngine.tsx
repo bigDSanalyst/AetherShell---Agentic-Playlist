@@ -63,6 +63,8 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
   const [knowledge, setKnowledge] = useState<SynthesizedKnowledge | null>(null);
   // Videos the server had to cut for length on the last request (never silent).
   const [cutVideos, setCutVideos] = useState<CorpusCoverage[]>([]);
+  // Sources the server did not hold in its archive, so it checked against the browser's copy.
+  const [notArchived, setNotArchived] = useState<CorpusCoverage[]>([]);
   // Models come from the server: whatever providers it is set up for (Gemini, local, OpenRouter, ...).
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelsError, setModelsError] = useState<string | null>(null);
@@ -125,6 +127,7 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
 
       setKnowledge(res.knowledge);
       setCutVideos((res.corpusCoverage || []).filter((c) => !c.complete));
+      setNotArchived((res.corpusCoverage || []).filter((c) => c.totalChars > 0 && c.fromArchive === false));
 
       // Record in session memory
       onUpdateSessionMemory({
@@ -174,6 +177,7 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
         (delta) => setChatMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: m.content + delta } : m)))
       );
       setCutVideos((res.corpusCoverage || []).filter((c) => !c.complete));
+      setNotArchived((res.corpusCoverage || []).filter((c) => c.totalChars > 0 && c.fromArchive === false));
       if (res.claimCheck) setChatMessages((prev) => prev.map((m) => (m.id === id ? { ...m, claimCheck: res.claimCheck } : m)));
     } catch (err: any) {
       // Drop the answer bubble if nothing arrived; keep partial text (the error says it is incomplete).
@@ -350,6 +354,12 @@ export const EpistemicKnowledgeEngine: React.FC<EpistemicKnowledgeEngineProps> =
               Too long to send whole: the model read only part of{' '}
               {cutVideos.map((c) => `Video ${c.video} "${c.title}" (${Math.round((100 * c.includedChars) / Math.max(1, c.totalChars))}%)`).join(', ')}.
               Combine fewer videos, or raise KNOWLEDGE_MAX_CORPUS_CHARS on the server.
+            </p>
+          )}
+          {notArchived.length > 0 && (
+            <p className="mt-1 text-[11px] font-mono text-slate-400" role="status">
+              Checked against this browser's copy, not the server's archived transcript (not in the archive):{' '}
+              {notArchived.map((c) => `Video ${c.video} "${c.title}"`).join(', ')}. Every other source was read and checked from the archive.
             </p>
           )}
         </div>

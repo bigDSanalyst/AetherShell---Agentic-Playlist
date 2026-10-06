@@ -56,7 +56,8 @@ test('DEMO_LIMIT_PER_IP=0 turns visitor AI calls off, as documented', () => {
 
 test('playlist ingest counts as an AI call (it may transcribe with Gemini)', () => {
   assert.equal(isVisitorAllowed('POST', '/api/youtube/fetch-playlist'), 'ai');
-  assert.equal(isVisitorAllowed('GET', '/api/transcripts/export'), 'read');
+  assert.equal(isVisitorAllowed('GET', '/api/transcripts/export'), 'owner-only'); // the whole archive is the owner's
+  assert.equal(isVisitorAllowed('GET', '/api/transcripts/library'), 'read');
   assert.equal(isVisitorAllowed('POST', '/transcripts/import'), 'owner-only'); // path as mounted under /api
 });
 
@@ -92,4 +93,13 @@ test('a visitor\'s own Gemini key: AI calls are not counted, owner-only actions 
   // Error text never carries the key.
   const { runWithVisitorKey } = await import('../server/byok');
   assert.equal(runWithVisitorKey(key, () => redactKey(`bad key ${key} refused`)), 'bad key [your key] refused');
+});
+
+test('the archive export and the doctor report are the owner\'s; the ledger stays readable as public evidence', () => {
+  const mw = accessControlAndDemoLimit('secret', { store: new DemoUsageStore(null), limit: () => 3 });
+  assert.deepEqual(call(mw, 'GET', '/transcripts/export'), { status: 401, code: 'ACCESS_TOKEN_REQUIRED' });
+  assert.deepEqual(call(mw, 'GET', '/doctor'), { status: 401, code: 'ACCESS_TOKEN_REQUIRED' });
+  assert.equal(call(mw, 'GET', '/transcripts/export', 'secret').status, 'next');
+  assert.equal(call(mw, 'GET', '/ledger/entries').status, 'next');
+  assert.equal(call(mw, 'GET', '/transcripts/library').status, 'next');
 });

@@ -511,6 +511,7 @@ export interface CorpusCoverage {
   includedChars: number;
   totalChars: number;
   complete: boolean;
+  fromArchive?: boolean; // the server used its archived (recorded, signable) text, not the browser's copy
 }
 
 export async function synthesizePlaylistKnowledge(params: {
@@ -520,7 +521,7 @@ export async function synthesizePlaylistKnowledge(params: {
   mode?: string;
   focusQuery?: string;
   preferredModel?: string;
-}): Promise<{ knowledge: any; synthesizedAt: number; corpusCoverage?: CorpusCoverage[] }> {
+}): Promise<{ knowledge: any; synthesizedAt: number; corpusCoverage?: CorpusCoverage[]; sourceCheck?: { fromArchive: number; total: number } }> {
   const res = await apiFetch('/api/knowledge/synthesize', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
